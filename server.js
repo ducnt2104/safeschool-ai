@@ -3,22 +3,30 @@ require('dotenv').config();
 const path = require('node:path');
 const crypto = require('node:crypto');
 const express = require('express');
+const compression = require('compression');
 const { GoogleGenAI } = require('@google/genai');
 const { z } = require('zod');
 const { createDatabase } = require('./database');
 
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-const FALLBACK_MODEL = 'gemini-3.5-flash-lite';
-const GEMINI_PRIMARY_TIMEOUT_MS = 10000;
-const GEMINI_FALLBACK_TIMEOUT_MS = 20000;
+const FAST_DEFAULT_MODEL = 'gemini-3.5-flash-lite';
+const SECONDARY_MODEL = 'gemini-3.8-flash';
+const rawEnvModel = String(process.env.GEMINI_MODEL || '').trim();
+// Nếu chưa cấu hình hoặc cấu hình gemini-3.5-flash (đã deprecated/chậm trên API),
+// tự động định tuyến sang nhánh siêu tốc gemini-3.5-flash-lite (< 1.5s, tương thích schema gemini-3.5-flash).
+const DEFAULT_MODEL =
+  !rawEnvModel || rawEnvModel === 'gemini-3.5-flash' ? FAST_DEFAULT_MODEL : rawEnvModel;
+const GEMINI_PRIMARY_TIMEOUT_MS = 5500;
+const GEMINI_FALLBACK_TIMEOUT_MS = 14000;
 const REQUESTED_MODEL_NOTE =
-  DEFAULT_MODEL === 'gemini-3.8-flash'
-    ? 'Sử dụng model gemini-3.8-flash (bản nâng cấp thay thế chính thức cho gemini-3.5-flash đã ngừng hỗ trợ).'
+  DEFAULT_MODEL === FAST_DEFAULT_MODEL
+    ? 'Sử dụng model gemini-3.5-flash-lite (nhánh siêu tốc tối ưu độ trễ < 1.5s, tương thích cấu hình gemini-3.5-flash).'
     : `Sử dụng model ${DEFAULT_MODEL}.`;
 
-const SCHOOL_NAME = 'Trường THPT Tôn Đức Thắng — Xã Tà Lài, Thành phố Đồng Nai';
+const SCHOOL_NAME = 'Trường THPT Tôn Đức Thắng, xã Tà Lài, tỉnh Đồng Nai';
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_STORED_IMAGE_BYTES = 4 * 1024 * 1024;
+const ANALYSIS_CACHE_TTL_MS = 30 * 60 * 1000;
+const ANALYSIS_CACHE_MAX_ENTRIES = 200;
 
 const CATEGORIES = [
   'Miệt thị ngoại hình (Body Shaming)',
@@ -33,20 +41,18 @@ const CATEGORIES = [
 ];
 
 const ANALYSIS_SYSTEM_INSTRUCTION = [
-  'Bạn là Chuyên gia Tâm lý Học đường và An toàn Không gian mạng tại Việt Nam, đồng hành cùng học sinh THPT (triển khai tại Trường THPT Tôn Đức Thắng, xã Tà Lài, Thành phố Đồng Nai).',
-  'Nhiệm vụ của bạn là phân tích văn bản hoặc ảnh chụp màn hình đoạn hội thoại/bình luận mạng xã hội mà học sinh cung cấp để phát hiện dấu hiệu bắt nạt trực tuyến (cyberbullying), quấy rối, cô lập hoặc tổn thương tâm lý.',
-  'Hãy đánh giá khách quan, chính xác ngữ cảnh tiếng Việt (bao gồm cả tiếng lóng, teencode, viết tắt của học sinh trên Facebook, Zalo, TikTok, Messenger).',
-  'Phân biệt hợp lý giữa trêu đùa thân thiện thông thường với hành vi công kích, miệt thị, cô lập, bôi nhọ hay đe dọa thực sự.',
-  'Nếu phát hiện dấu hiệu đe dọa tính mạng, bạo lực nghiêm trọng, tống tiền nhạy cảm hoặc có ý định tự hại/tuyệt vọng, BẮT BUỘC xếp mức CRITICAL.',
-  'Trả về kết quả thuần túy theo đúng JSON Schema được yêu cầu. Ngôn ngữ phản hồi phải ấm áp, tôn trọng, bảo vệ học sinh và mang tính giáo dục tích cực.',
+  'Bạn là Chuyên gia Tâm lý Học đường & An toàn Mạng tại Việt Nam (SafeSchool AI - Trường THPT Tôn Đức Thắng, xã Tà Lài, tỉnh Đồng Nai).',
+  'Phân tích nhanh, chuẩn xác văn bản hoặc ảnh chụp màn hình để phát hiện bắt nạt trực tuyến, tiếng lóng, teencode học đường trên Facebook, Messenger, Zalo, TikTok.',
+  'Phân biệt trêu đùa thân thiện với công kích, miệt thị, cô lập, vu khống hay đe dọa. Nếu có nguy cơ tự hại, đe dọa tính mạng hoặc bạo lực nghiêm trọng, BẮT BUỘC xếp CRITICAL.',
+  'Trả về JSON ngắn gọn, súc tích đúng Schema: trích dẫn cụm từ gây tổn thương nổi bật (evidence_excerpt), đánh giá tác động tâm lý & pháp lý theo Luật An ninh mạng 2018 (legal_psych_impact), lời trấn an ấm áp (psychological_first_aid) và 3-4 bước hành động cụ thể gồm cách giữ nguyên URL/thời gian/ID khi chụp màn hình và chặn/báo cáo.',
 ].join(' ');
 
 const CHAT_SYSTEM_INSTRUCTION = [
-  'Bạn là Trợ lý Cẩm nang An toàn Mạng & Sơ cứu Cảm xúc của nền tảng SafeSchool AI (Lá chắn Số Học đường) tại Trường THPT Tôn Đức Thắng, xã Tà Lài, Thành phố Đồng Nai.',
-  'Đối tượng trò chuyện là học sinh THPT. Hãy dùng giọng văn gần gũi, tôn trọng, không phán xét, bảo vệ sự an toàn và sức khỏe tinh thần của các em.',
-  'Kiến thức trọng tâm: (1) Kỹ năng nhận diện và ứng xử với bắt nạt mạng, body shaming, cô lập nhóm chat, tin giả bôi nhọ; (2) Quy trình lưu giữ bằng chứng số hợp lệ (chụp màn hình rõ tên tài khoản, URL, thời gian, không cắt ghép); (3) Cách chặn/báo cáo trên Facebook, Zalo, TikTok; (4) Quy định cơ bản của Luật An ninh mạng 2018 & Bộ Quy tắc ứng xử trên mạng xã hội (QĐ 874/QĐ-BTTTT) liên quan tới xúc phạm danh dự, nhân phẩm trên không gian mạng; (5) Tự điều hòa cảm xúc khi bị tổn thương.',
-  'Nếu học sinh có dấu hiệu khủng hoảng tâm lý nặng, tự hại hoặc bị đe dọa nguy hiểm, lập tức khuyên các em liên hệ Tổng đài Quốc gia Bảo vệ Trẻ em 111 (miễn phí 24/7), Đường dây nóng Ngày Mai (hỗ trợ trầm cảm/khủng hoảng cho thanh thiếu niên: 096 306 1414), người lớn tin cậy hoặc gửi hồ sơ ẩn danh tới Tổ Tư vấn Tâm lý Nhà trường ngay trên ứng dụng.',
-  'Trả lời súc tích, rõ ràng theo từng ý ngắn gọn, dễ đọc trên điện thoại.',
+  'Bạn là Trợ lý Cẩm nang An toàn Mạng & Luyện Phản xạ (AI Safety Coach) của nền tảng SafeSchool AI tại Trường THPT Tôn Đức Thắng, xã Tà Lài, tỉnh Đồng Nai.',
+  'Đối tượng là học sinh THPT. Giọng văn gần gũi, tôn trọng, bảo vệ sức khỏe tinh thần và phẩm giá học sinh.',
+  'Hỗ trợ: (1) Gợi ý 2-3 câu đáp trả khéo léo, bản lĩnh khi bị trêu chọc hoặc công kích nhóm chat; (2) Lưu bằng chứng số chuẩn pháp lý (giữ URL, thời gian, ID tài khoản); (3) Chặn/báo cáo trên Facebook, Messenger, Zalo, TikTok; (4) Quyền riêng tư & Luật An ninh mạng 2018 / QĐ 874/QĐ-BTTTT.',
+  'Nếu phát hiện khủng hoảng nặng hoặc tự hại, khuyên gọi ngay Tổng đài Bảo vệ Trẻ em 111 (24/7), Đường dây nóng Ngày Mai 096 306 1414 hoặc gửi hồ sơ ẩn danh trên ứng dụng.',
+  'Trả lời súc tích theo gạch đầu dòng ngắn gọn, dễ đọc trên điện thoại.',
 ].join('\n');
 
 const ANALYSIS_RESPONSE_SCHEMA = {
@@ -55,8 +61,7 @@ const ANALYSIS_RESPONSE_SCHEMA = {
     risk_level: {
       type: 'string',
       enum: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'],
-      description:
-        'Mức độ rủi ro: LOW (An toàn/Thấp), MEDIUM (Cần theo dõi), HIGH (Rủi ro cao), CRITICAL (Khẩn cấp - đe dọa tính mạng/bạo lực nghiêm trọng/tự hại).',
+      description: 'Mức độ rủi ro: LOW, MEDIUM, HIGH, hoặc CRITICAL.',
     },
     category: {
       type: 'string',
@@ -67,17 +72,25 @@ const ANALYSIS_RESPONSE_SCHEMA = {
       type: 'integer',
       minimum: 0,
       maximum: 100,
-      description: 'Độ tin cậy của nhận định từ 0 đến 100 (%).',
+      description: 'Độ tin cậy từ 0 đến 100 (%).',
+    },
+    evidence_excerpt: {
+      type: 'string',
+      description:
+        'Trích dẫn ngắn gọn cụm từ hoặc chi tiết hình ảnh gây tổn thương; nếu an toàn ghi "Không phát hiện chi tiết công kích."',
     },
     detected_signals: {
       type: 'string',
+      description: 'Giải thích súc tích, khách quan dấu hiệu ngôn ngữ/ngữ cảnh phát hiện được.',
+    },
+    legal_psych_impact: {
+      type: 'string',
       description:
-        'Giải thích ngắn gọn, khách quan các dấu hiệu ngôn ngữ, ngữ cảnh hoặc chi tiết hình ảnh đã phát hiện.',
+        'Đánh giá ngắn tác động tâm lý và quyền được bảo vệ theo Luật An ninh mạng 2018 / QĐ 874/QĐ-BTTTT.',
     },
     psychological_first_aid: {
       type: 'string',
-      description:
-        'Lời trấn an ấm áp, đồng cảm, không phán xét dành cho học sinh ngay lúc này.',
+      description: 'Lời trấn an ấm áp, đồng cảm, không phán xét dành cho học sinh ngay lúc này.',
     },
     actionable_steps: {
       type: 'array',
@@ -85,14 +98,16 @@ const ANALYSIS_RESPONSE_SCHEMA = {
       maxItems: 4,
       items: { type: 'string' },
       description:
-        '3 đến 4 bước hành động cụ thể, thực tế mà học sinh có thể làm ngay lập tức.',
+        '3 đến 4 bước ứng phó cụ thể (lưu chứng cứ giữ URL/thời gian/ID, chặn/báo cáo trên Facebook/Zalo/TikTok).',
     },
   },
   required: [
     'risk_level',
     'category',
     'confidence_score',
+    'evidence_excerpt',
     'detected_signals',
+    'legal_psych_impact',
     'psychological_first_aid',
     'actionable_steps',
   ],
@@ -101,9 +116,11 @@ const ANALYSIS_RESPONSE_SCHEMA = {
 
 const AnalysisResultSchema = z.object({
   risk_level: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
-  category: z.string().min(2).max(120),
+  category: z.string().min(2).max(140),
   confidence_score: z.number().int().min(0).max(100),
+  evidence_excerpt: z.string().max(600).optional().default(''),
   detected_signals: z.string().min(4).max(2000),
+  legal_psych_impact: z.string().max(1200).optional().default(''),
   psychological_first_aid: z.string().min(4).max(2000),
   actionable_steps: z.array(z.string().min(3).max(500)).min(1).max(6),
 });
@@ -320,21 +337,163 @@ async function callGeminiWithRetry(fn, maxRetries = 1) {
   throw lastError;
 }
 
+const aiClientPool = new Map();
+const modelCooldownUntil = new Map();
+
+function getGenAIClient(apiKey) {
+  let client = aiClientPool.get(apiKey);
+  if (!client) {
+    if (aiClientPool.size >= 8) {
+      const oldestKey = aiClientPool.keys().next().value;
+      aiClientPool.delete(oldestKey);
+    }
+    client = new GoogleGenAI({ apiKey });
+    aiClientPool.set(apiKey, client);
+  }
+  return client;
+}
+
+function getThinkingLevelForModel(model) {
+  const name = String(model || '').toLowerCase();
+  if (
+    name.includes('3.8') ||
+    name.includes('4-') ||
+    name.includes('pro') ||
+    name.includes('2.5')
+  ) {
+    return 'low';
+  }
+  return 'minimal';
+}
+
+function buildAnalysisGenerationConfig(model) {
+  return {
+    thinking_level: getThinkingLevelForModel(model),
+    temperature: 0.15,
+    max_output_tokens: 1024,
+  };
+}
+
+function buildChatGenerationConfig(model) {
+  return {
+    thinking_level: getThinkingLevelForModel(model),
+    temperature: 0.25,
+    max_output_tokens: 1024,
+  };
+}
+
 /**
- * Thử gọi model chính; nếu quá tải hoặc timeout tạm thời thì tự chuyển sang model dự phòng nhanh.
+ * Quét JSON đang stream để trích xuất ngay các trường đã hoàn chỉnh (phục vụ SSE Progressive UI).
+ */
+function extractCompletedJsonFields(raw) {
+  const src = String(raw || '').trim();
+  const objStart = src.indexOf('{');
+  if (objStart === -1) return {};
+
+  const fields = {};
+  let i = objStart + 1;
+  const n = src.length;
+
+  const skipWs = () => {
+    while (i < n && /[\s,]/.test(src[i])) i += 1;
+  };
+
+  const readJsonString = () => {
+    if (src[i] !== '"') return null;
+    const start = i;
+    i += 1;
+    while (i < n) {
+      const ch = src[i];
+      if (ch === '\\') {
+        i += 2;
+        continue;
+      }
+      if (ch === '"') {
+        const token = src.slice(start, i + 1);
+        i += 1;
+        try {
+          return JSON.parse(token);
+        } catch {
+          return null;
+        }
+      }
+      i += 1;
+    }
+    return undefined; // Chưa hoàn thành chuỗi trong stream
+  };
+
+  while (i < n) {
+    skipWs();
+    if (i >= n || src[i] === '}') break;
+    if (src[i] !== '"') {
+      i += 1;
+      continue;
+    }
+    const key = readJsonString();
+    if (key === undefined) break;
+    skipWs();
+    if (src[i] !== ':') break;
+    i += 1;
+    skipWs();
+    if (i >= n) break;
+
+    if (src[i] === '"') {
+      const val = readJsonString();
+      if (val === undefined) break;
+      if (key && val !== null) fields[key] = val;
+    } else if (src[i] === '[') {
+      i += 1;
+      const items = [];
+      let closed = false;
+      while (i < n) {
+        skipWs();
+        if (i >= n) break;
+        if (src[i] === ']') {
+          i += 1;
+          closed = true;
+          break;
+        }
+        if (src[i] === '"') {
+          const item = readJsonString();
+          if (item === undefined) break;
+          if (item !== null) items.push(item);
+        } else {
+          i += 1;
+        }
+      }
+      if (key && items.length > 0) fields[key] = items;
+      if (!closed) break;
+    } else {
+      const valStart = i;
+      while (i < n && !/[,}\s]/.test(src[i])) i += 1;
+      if (i >= n) break; // Chờ ký tự phân tách để chắc chắn số đã hoàn tất
+      const token = src.slice(valStart, i);
+      if (key && /^-?\d+(?:\.\d+)?$/.test(token)) {
+        fields[key] = Number(token);
+      }
+    }
+  }
+
+  return fields;
+}
+
+/**
+ * Thử gọi model chính; bỏ qua tức thì model đang trong cooldown 429/timeout để không nghẽn luồng.
  */
 async function runWithModelFallback(primaryModel, invokeForModel) {
-  const candidates =
-    primaryModel && primaryModel !== FALLBACK_MODEL
-      ? [primaryModel, FALLBACK_MODEL]
-      : [primaryModel || DEFAULT_MODEL];
+  const rawCandidates = [primaryModel || DEFAULT_MODEL, FAST_DEFAULT_MODEL, SECONDARY_MODEL];
+  const uniqueCandidates = Array.from(new Set(rawCandidates.filter(Boolean)));
+  const now = Date.now();
+  const activeCandidates = uniqueCandidates.filter(
+    (m) => (modelCooldownUntil.get(m) || 0) <= now
+  );
+  const candidates = activeCandidates.length > 0 ? activeCandidates : uniqueCandidates;
 
   let lastError;
   for (let idx = 0; idx < candidates.length; idx += 1) {
     const model = candidates[idx];
     const isLastCandidate = idx === candidates.length - 1;
     try {
-      // Tắt retry nội bộ SDK để kiểm soát failover nhanh sang model dự phòng khi model chính quá tải
       const requestOptions = {
         timeout_ms: isLastCandidate ? GEMINI_FALLBACK_TIMEOUT_MS : GEMINI_PRIMARY_TIMEOUT_MS,
         retries: { strategy: 'none' },
@@ -347,6 +506,16 @@ async function runWithModelFallback(primaryModel, invokeForModel) {
       return { result, modelUsed: model };
     } catch (error) {
       lastError = error;
+      const status = Number(error?.status || error?.statusCode || 0);
+      const msgLower = String(error?.message || '').toLowerCase();
+      if (status === 429 || msgLower.includes('quota') || msgLower.includes('rate limit')) {
+        modelCooldownUntil.set(model, Date.now() + 10 * 60 * 1000);
+      } else if (
+        String(error?.name || '').toLowerCase() === 'timeouterror' ||
+        msgLower.includes('timeout')
+      ) {
+        modelCooldownUntil.set(model, Date.now() + 2 * 60 * 1000);
+      }
       if (!isTransientGeminiError(error) || isLastCandidate) {
         throw error;
       }
@@ -410,27 +579,51 @@ function createApp(options = {}) {
     return next();
   }
 
+  function buildAnalysisInputParts(text, image) {
+    const inputParts = [];
+    const userText =
+      text && text.trim()
+        ? text.trim()
+        : 'Hãy phân tích toàn bộ nội dung văn bản, bình luận và ngữ cảnh trong ảnh chụp màn hình đính kèm.';
+
+    inputParts.push({
+      type: 'text',
+      text: `Nội dung học sinh cung cấp để phân tích dấu hiệu bắt nạt trực tuyến:\n"""\n${userText}\n"""`,
+    });
+
+    if (image) {
+      inputParts.push({
+        type: 'image',
+        data: image.base64Data,
+        mime_type: image.mimeType,
+      });
+    }
+    return inputParts;
+  }
+
+  function buildChatTranscriptFallbackPrompt(message, history) {
+    if (!Array.isArray(history) || history.length === 0) {
+      return message;
+    }
+    const recent = history.slice(-10).map((turn) => {
+      const speaker = turn.role === 'assistant' ? 'Trợ lý' : 'Học sinh';
+      return `${speaker}: ${turn.text}`;
+    });
+    return `Ngữ cảnh hội thoại trước đó:\n${recent.join('\n')}\n\nCâu hỏi mới của học sinh: ${message}`;
+  }
+
+  function attachModelMeta(analysisObj, modelUsed) {
+    Object.defineProperty(analysisObj, '__modelUsed', {
+      value: modelUsed,
+      enumerable: false,
+    });
+    return analysisObj;
+  }
+
   const defaultAiRunner = {
     async analyze({ apiKey, text, image }) {
-      const ai = new GoogleGenAI({ apiKey });
-      const inputParts = [];
-      const userText =
-        text && text.trim()
-          ? text.trim()
-          : 'Hãy phân tích toàn bộ nội dung văn bản, bình luận và ngữ cảnh trong ảnh chụp màn hình đính kèm.';
-
-      inputParts.push({
-        type: 'text',
-        text: `Nội dung học sinh cung cấp để phân tích dấu hiệu bắt nạt trực tuyến:\n"""\n${userText}\n"""`,
-      });
-
-      if (image) {
-        inputParts.push({
-          type: 'image',
-          data: image.base64Data,
-          mime_type: image.mimeType,
-        });
-      }
+      const ai = getGenAIClient(apiKey);
+      const inputParts = buildAnalysisInputParts(text, image);
 
       const { result: interaction, modelUsed } = await runWithModelFallback(
         geminiModel,
@@ -446,9 +639,7 @@ function createApp(options = {}) {
                 mime_type: 'application/json',
                 schema: ANALYSIS_RESPONSE_SCHEMA,
               },
-              generation_config: {
-                thinking_level: 'low',
-              },
+              generation_config: buildAnalysisGenerationConfig(model),
               store: false,
             },
             requestOptions
@@ -461,35 +652,75 @@ function createApp(options = {}) {
       }
       const parsed = parseJsonResponse(rawOutput);
       const validated = AnalysisResultSchema.parse(parsed);
-      Object.defineProperty(validated, '__modelUsed', {
-        value: modelUsed,
-        enumerable: false,
-      });
-      return validated;
+      return attachModelMeta(validated, modelUsed);
+    },
+
+    async analyzeStream({ apiKey, text, image, onPartial, signal }) {
+      const ai = getGenAIClient(apiKey);
+      const inputParts = buildAnalysisInputParts(text, image);
+
+      const { result: stream, modelUsed } = await runWithModelFallback(
+        geminiModel,
+        (model, requestOptions) =>
+          ai.interactions.create(
+            {
+              model,
+              system_instruction: ANALYSIS_SYSTEM_INSTRUCTION,
+              input: [{ type: 'user_input', content: inputParts }],
+              response_format: {
+                type: 'text',
+                mime_type: 'application/json',
+                schema: ANALYSIS_RESPONSE_SCHEMA,
+              },
+              generation_config: buildAnalysisGenerationConfig(model),
+              stream: true,
+              store: false,
+            },
+            requestOptions
+          )
+      );
+
+      let rawOutput = '';
+      let lastFieldSignature = '';
+
+      for await (const ev of stream) {
+        if (signal?.aborted) break;
+        if (ev.event_type === 'step.delta' && ev.delta?.type === 'text' && ev.delta.text) {
+          rawOutput += ev.delta.text;
+          if (typeof onPartial === 'function') {
+            const fields = extractCompletedJsonFields(rawOutput);
+            const sig = JSON.stringify(fields);
+            if (sig !== lastFieldSignature && Object.keys(fields).length > 0) {
+              lastFieldSignature = sig;
+              onPartial(fields);
+            }
+          }
+        } else if (ev.event_type === 'error' && ev.error) {
+          const err = new Error(ev.error.message || 'Lỗi stream từ Gemini AI.');
+          err.status = ev.error.code || 502;
+          throw err;
+        }
+      }
+
+      if (!rawOutput.trim()) {
+        throw new Error('Phản hồi từ AI trống.');
+      }
+      const parsed = parseJsonResponse(rawOutput);
+      const validated = AnalysisResultSchema.parse(parsed);
+      return attachModelMeta(validated, modelUsed);
     },
 
     async chat({ apiKey, message, previousInteractionId, history }) {
-      const ai = new GoogleGenAI({ apiKey });
-
-      const buildTranscriptFallbackPrompt = () => {
-        if (!Array.isArray(history) || history.length === 0) {
-          return message;
-        }
-        const recent = history.slice(-10).map((turn) => {
-          const speaker = turn.role === 'assistant' ? 'Trợ lý' : 'Học sinh';
-          return `${speaker}: ${turn.text}`;
-        });
-        return `Ngữ cảnh hội thoại trước đó:\n${recent.join('\n')}\n\nCâu hỏi mới của học sinh: ${message}`;
-      };
+      const ai = getGenAIClient(apiKey);
 
       const sendChat = (model, usePreviousId, requestOptions) => {
         const params = {
           model,
           system_instruction: CHAT_SYSTEM_INSTRUCTION,
-          input: usePreviousId ? message : buildTranscriptFallbackPrompt(),
-          generation_config: {
-            thinking_level: 'low',
-          },
+          input: usePreviousId
+            ? message
+            : buildChatTranscriptFallbackPrompt(message, history),
+          generation_config: buildChatGenerationConfig(model),
           store: true,
         };
         if (usePreviousId && previousInteractionId) {
@@ -509,7 +740,6 @@ function createApp(options = {}) {
             return await sendChat(model, true, requestOptions);
           } catch (err) {
             const status = Number(err?.status || err?.statusCode || 0);
-            // Nếu previous_interaction_id hết hạn hoặc thuộc API Key khác, tự chuyển sang ngữ cảnh lịch sử
             if (status === 400 || status === 404) {
               return sendChat(model, false, requestOptions);
             }
@@ -528,12 +758,123 @@ function createApp(options = {}) {
         modelUsed,
       };
     },
+
+    async chatStream({ apiKey, message, previousInteractionId, history, onDelta, signal }) {
+      const ai = getGenAIClient(apiKey);
+
+      const openChatStream = (model, usePreviousId, requestOptions) => {
+        const params = {
+          model,
+          system_instruction: CHAT_SYSTEM_INSTRUCTION,
+          input: usePreviousId
+            ? message
+            : buildChatTranscriptFallbackPrompt(message, history),
+          generation_config: buildChatGenerationConfig(model),
+          stream: true,
+          store: true,
+        };
+        if (usePreviousId && previousInteractionId) {
+          params.previous_interaction_id = previousInteractionId;
+        }
+        return ai.interactions.create(params, requestOptions);
+      };
+
+      const { result: stream, modelUsed } = await runWithModelFallback(
+        geminiModel,
+        async (model, requestOptions) => {
+          const canContinue = Boolean(previousInteractionId) && model === geminiModel;
+          if (!canContinue) {
+            return openChatStream(model, false, requestOptions);
+          }
+          try {
+            return await openChatStream(model, true, requestOptions);
+          } catch (err) {
+            const status = Number(err?.status || err?.statusCode || 0);
+            if (status === 400 || status === 404) {
+              return openChatStream(model, false, requestOptions);
+            }
+            throw err;
+          }
+        }
+      );
+
+      let reply = '';
+      let interactionId = null;
+
+      for await (const ev of stream) {
+        if (signal?.aborted) break;
+        if (ev.event_type === 'step.delta' && ev.delta?.type === 'text' && ev.delta.text) {
+          reply += ev.delta.text;
+          if (typeof onDelta === 'function') {
+            onDelta(ev.delta.text);
+          }
+        } else if (ev.event_type === 'interaction.completed' && ev.interaction?.id) {
+          interactionId = ev.interaction.id;
+        } else if (ev.event_type === 'interaction.created' && ev.interaction?.id) {
+          interactionId = interactionId || ev.interaction.id;
+        }
+      }
+
+      if (!reply.trim()) {
+        throw new Error('Trợ lý AI không trả về nội dung.');
+      }
+      return { reply, interactionId, modelUsed };
+    },
   };
 
   const aiRunner = options.aiRunner || defaultAiRunner;
 
+  // Bộ nhớ đệm SHA-256 cho nội dung phân tích trùng lặp (< 10ms)
+  const analyzeCache = new Map();
+
+  function computeAnalyzeCacheKey(text, image) {
+    const hash = crypto.createHash('sha256');
+    hash.update(String(geminiModel || ''));
+    hash.update('\0');
+    hash.update(String(text || '').trim());
+    hash.update('\0');
+    hash.update(image ? `${image.mimeType}:${image.base64Data}` : '');
+    return hash.digest('hex');
+  }
+
+  function getCachedAnalysis(cacheKey) {
+    const entry = analyzeCache.get(cacheKey);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      analyzeCache.delete(cacheKey);
+      return null;
+    }
+    // LRU touch
+    analyzeCache.delete(cacheKey);
+    analyzeCache.set(cacheKey, entry);
+    return entry;
+  }
+
+  function setCachedAnalysis(cacheKey, analysis, modelUsed) {
+    if (analyzeCache.size >= ANALYSIS_CACHE_MAX_ENTRIES) {
+      const oldestKey = analyzeCache.keys().next().value;
+      analyzeCache.delete(oldestKey);
+    }
+    analyzeCache.set(cacheKey, {
+      analysis,
+      modelUsed,
+      expiresAt: Date.now() + ANALYSIS_CACHE_TTL_MS,
+    });
+  }
+
   const app = express();
   app.disable('x-powered-by');
+  app.use(
+    compression({
+      threshold: 512,
+      filter: (req, res) => {
+        if (req.path.endsWith('/stream') || req.headers.accept === 'text/event-stream') {
+          return false;
+        }
+        return compression.filter(req, res);
+      },
+    })
+  );
   app.use(express.json({ limit: '12mb' }));
 
   // Header bảo mật cơ bản và tôn trọng chính sách Zero-Identity
@@ -591,48 +932,95 @@ function createApp(options = {}) {
     });
   });
 
-  app.post('/api/analyze', async (req, res) => {
-    const parsedBody = AnalyzeRequestSchema.safeParse(req.body);
+  function validateAnalyzeInput(body) {
+    const parsedBody = AnalyzeRequestSchema.safeParse(body);
     if (!parsedBody.success) {
-      return res.status(400).json({
-        ok: false,
-        code: 'VALIDATION_ERROR',
-        error: 'Dữ liệu gửi lên không hợp lệ.',
-      });
+      return { status: 400, code: 'VALIDATION_ERROR', error: 'Dữ liệu gửi lên không hợp lệ.' };
     }
-
     const text = (parsedBody.data.text || '').trim();
     const rawImage = parsedBody.data.imageDataUrl || null;
-
     if (!text && !rawImage) {
-      return res.status(400).json({
-        ok: false,
+      return {
+        status: 400,
         code: 'EMPTY_INPUT',
         error:
           'Vui lòng nhập nội dung tin nhắn/bình luận hoặc đính kèm ảnh chụp màn hình để AI phân tích.',
-      });
+      };
     }
-
     let parsedImage = null;
     if (rawImage) {
       try {
         parsedImage = parseImageDataUrl(rawImage, MAX_IMAGE_BYTES);
       } catch (err) {
-        return res.status(err.status || 400).json({
-          ok: false,
+        return {
+          status: err.status || 400,
           code: 'INVALID_IMAGE',
           error: err.message,
-        });
+        };
       }
     }
-
     const apiKey = resolveServerApiKey();
     if (!apiKey) {
-      return res.status(503).json({
-        ok: false,
+      return {
+        status: 503,
         code: 'MISSING_API_KEY',
         error:
           'Dịch vụ phân tích AI trên máy chủ chưa được cấu hình GEMINI_API_KEY trong tệp .env. Vui lòng liên hệ quản trị viên hệ thống.',
+      };
+    }
+    return { ok: true, text, parsedImage, apiKey };
+  }
+
+  function initSseResponse(res) {
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
+  }
+
+  function attachSseAbort(res) {
+    const abortController = new AbortController();
+    res.on('close', () => {
+      if (!res.writableFinished && !res.writableEnded) {
+        abortController.abort();
+      }
+    });
+    return abortController;
+  }
+
+  function sendSseEvent(res, eventName, payload) {
+    if (res.writableEnded || res.destroyed) return;
+    res.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
+    if (typeof res.flush === 'function') {
+      res.flush();
+    }
+  }
+
+  app.post('/api/analyze', async (req, res) => {
+    const startedAt = Date.now();
+    const checked = validateAnalyzeInput(req.body);
+    if (!checked.ok) {
+      return res.status(checked.status).json({
+        ok: false,
+        code: checked.code,
+        error: checked.error,
+      });
+    }
+
+    const { text, parsedImage, apiKey } = checked;
+    const cacheKey = computeAnalyzeCacheKey(text, parsedImage);
+    const cachedHit = getCachedAnalysis(cacheKey);
+    if (cachedHit) {
+      return res.json({
+        ok: true,
+        cached: true,
+        latencyMs: Date.now() - startedAt,
+        modelUsed: cachedHit.modelUsed,
+        analysis: cachedHit.analysis,
       });
     }
 
@@ -642,9 +1030,13 @@ function createApp(options = {}) {
         text,
         image: parsedImage,
       });
+      const modelUsed = analysis?.__modelUsed || geminiModel;
+      setCachedAnalysis(cacheKey, analysis, modelUsed);
       return res.json({
         ok: true,
-        modelUsed: analysis?.__modelUsed || geminiModel,
+        cached: false,
+        latencyMs: Date.now() - startedAt,
+        modelUsed,
         analysis,
       });
     } catch (error) {
@@ -654,6 +1046,118 @@ function createApp(options = {}) {
         code: mapped.code,
         error: mapped.message,
       });
+    }
+  });
+
+  app.post('/api/analyze/stream', async (req, res) => {
+    const startedAt = Date.now();
+    const checked = validateAnalyzeInput(req.body);
+    if (!checked.ok) {
+      return res.status(checked.status).json({
+        ok: false,
+        code: checked.code,
+        error: checked.error,
+      });
+    }
+
+    const { text, parsedImage, apiKey } = checked;
+    initSseResponse(res);
+
+    const abortController = attachSseAbort(res);
+
+    const elapsed = () => Date.now() - startedAt;
+
+    const cacheKey = computeAnalyzeCacheKey(text, parsedImage);
+    const cachedHit = getCachedAnalysis(cacheKey);
+    if (cachedHit) {
+      sendSseEvent(res, 'stage', {
+        step: 'cache_hit',
+        label: 'Tìm thấy kết quả tức thì từ bộ nhớ đệm SHA-256...',
+        percent: 96,
+        elapsedMs: elapsed(),
+      });
+      sendSseEvent(res, 'done', {
+        ok: true,
+        cached: true,
+        latencyMs: elapsed(),
+        modelUsed: cachedHit.modelUsed,
+        analysis: cachedHit.analysis,
+      });
+      return res.end();
+    }
+
+    sendSseEvent(res, 'stage', {
+      step: 'scanning',
+      label: parsedImage
+        ? 'AI đang quét hình ảnh & đọc ngữ cảnh tin nhắn...'
+        : 'AI đang quét ngữ cảnh & tín hiệu tâm lý...',
+      percent: 45,
+      elapsedMs: elapsed(),
+    });
+
+    try {
+      let sentFirstAidStage = false;
+      let analysis;
+
+      if (typeof aiRunner.analyzeStream === 'function') {
+        analysis = await aiRunner.analyzeStream({
+          apiKey,
+          text,
+          image: parsedImage,
+          signal: abortController.signal,
+          onPartial: (fields) => {
+            if (!sentFirstAidStage && fields.psychological_first_aid) {
+              sentFirstAidStage = true;
+              sendSseEvent(res, 'stage', {
+                step: 'first_aid',
+                label: 'Đang hoàn tất sơ cứu tâm lý & kịch bản ứng phó...',
+                percent: 86,
+                elapsedMs: elapsed(),
+              });
+            }
+            sendSseEvent(res, 'partial', {
+              fields,
+              elapsedMs: elapsed(),
+            });
+          },
+        });
+      } else {
+        analysis = await aiRunner.analyze({
+          apiKey,
+          text,
+          image: parsedImage,
+        });
+      }
+
+      if (abortController.signal.aborted) return res.end();
+
+      const modelUsed = analysis?.__modelUsed || geminiModel;
+      setCachedAnalysis(cacheKey, analysis, modelUsed);
+
+      sendSseEvent(res, 'stage', {
+        step: 'done',
+        label: 'Hoàn tất phân tích & sơ cứu tâm lý',
+        percent: 100,
+        elapsedMs: elapsed(),
+      });
+      sendSseEvent(res, 'done', {
+        ok: true,
+        cached: false,
+        latencyMs: elapsed(),
+        modelUsed,
+        analysis,
+      });
+      return res.end();
+    } catch (error) {
+      if (abortController.signal.aborted) return res.end();
+      const mapped = classifyGeminiError(error);
+      sendSseEvent(res, 'error', {
+        ok: false,
+        status: mapped.status,
+        code: mapped.code,
+        error: mapped.message,
+      });
+      return res.end();
     }
   });
 
@@ -702,7 +1206,9 @@ function createApp(options = {}) {
       risk_level: analysis.risk_level,
       category: analysis.category,
       confidence_score: analysis.confidence_score,
+      evidence_excerpt: analysis.evidence_excerpt || '',
       detected_signals: analysis.detected_signals,
+      legal_psych_impact: analysis.legal_psych_impact || '',
       psychological_first_aid: analysis.psychological_first_aid,
       actionable_steps: analysis.actionable_steps,
     });
@@ -783,6 +1289,7 @@ function createApp(options = {}) {
   });
 
   app.post('/api/chat', async (req, res) => {
+    const startedAt = Date.now();
     const parsed = ChatRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -811,6 +1318,7 @@ function createApp(options = {}) {
       });
       return res.json({
         ok: true,
+        latencyMs: Date.now() - startedAt,
         modelUsed: result.modelUsed || geminiModel,
         reply: result.reply,
         interactionId: result.interactionId,
@@ -822,6 +1330,75 @@ function createApp(options = {}) {
         code: mapped.code,
         error: mapped.message,
       });
+    }
+  });
+
+  app.post('/api/chat/stream', async (req, res) => {
+    const startedAt = Date.now();
+    const parsed = ChatRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        error: parsed.error.issues[0]?.message || 'Câu hỏi không hợp lệ.',
+      });
+    }
+
+    const apiKey = resolveServerApiKey();
+    if (!apiKey) {
+      return res.status(503).json({
+        ok: false,
+        code: 'MISSING_API_KEY',
+        error:
+          'Dịch vụ Trợ lý AI trên máy chủ chưa được cấu hình GEMINI_API_KEY trong tệp .env. Vui lòng liên hệ quản trị viên hệ thống.',
+      });
+    }
+
+    initSseResponse(res);
+    const abortController = attachSseAbort(res);
+
+    try {
+      let result;
+      if (typeof aiRunner.chatStream === 'function') {
+        result = await aiRunner.chatStream({
+          apiKey,
+          message: parsed.data.message,
+          previousInteractionId: parsed.data.previousInteractionId || null,
+          history: parsed.data.history || [],
+          signal: abortController.signal,
+          onDelta: (deltaText) => {
+            sendSseEvent(res, 'delta', { text: deltaText });
+          },
+        });
+      } else {
+        result = await aiRunner.chat({
+          apiKey,
+          message: parsed.data.message,
+          previousInteractionId: parsed.data.previousInteractionId || null,
+          history: parsed.data.history || [],
+        });
+        sendSseEvent(res, 'delta', { text: result.reply });
+      }
+
+      if (abortController.signal.aborted) return res.end();
+      sendSseEvent(res, 'done', {
+        ok: true,
+        latencyMs: Date.now() - startedAt,
+        modelUsed: result.modelUsed || geminiModel,
+        reply: result.reply,
+        interactionId: result.interactionId,
+      });
+      return res.end();
+    } catch (error) {
+      if (abortController.signal.aborted) return res.end();
+      const mapped = classifyGeminiError(error);
+      sendSseEvent(res, 'error', {
+        ok: false,
+        status: mapped.status,
+        code: mapped.code,
+        error: mapped.message,
+      });
+      return res.end();
     }
   });
 
@@ -998,6 +1575,8 @@ if (require.main === module) {
       `SafeSchool AI (Lá chắn Số Học đường) đang chạy tại http://localhost:${PORT} | Model: ${DEFAULT_MODEL}`
     );
   });
+  server.keepAliveTimeout = 65000;
+  server.headersTimeout = 66000;
 
   const shutdown = () => {
     server.close(() => {

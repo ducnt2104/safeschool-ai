@@ -35,7 +35,9 @@ function createDatabase(dbFilePath) {
         CHECK (risk_level IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
       category TEXT NOT NULL,
       confidence_score INTEGER NOT NULL,
+      evidence_excerpt TEXT NOT NULL DEFAULT '',
       detected_signals TEXT NOT NULL,
+      legal_psych_impact TEXT NOT NULL DEFAULT '',
       psychological_first_aid TEXT NOT NULL,
       actionable_steps_json TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'PENDING'
@@ -62,6 +64,17 @@ function createDatabase(dbFilePath) {
     CREATE INDEX IF NOT EXISTS idx_messages_ticket_created
       ON messages(ticket_code, created_at ASC);
   `);
+
+  // Di trú an toàn cho tệp SQLite đã tồn tại trước bản nâng cấp
+  const existingCols = new Set(
+    db.prepare('PRAGMA table_info(tickets)').all().map((col) => col.name)
+  );
+  if (!existingCols.has('evidence_excerpt')) {
+    db.exec("ALTER TABLE tickets ADD COLUMN evidence_excerpt TEXT NOT NULL DEFAULT ''");
+  }
+  if (!existingCols.has('legal_psych_impact')) {
+    db.exec("ALTER TABLE tickets ADD COLUMN legal_psych_impact TEXT NOT NULL DEFAULT ''");
+  }
 
   function generateTicketCode() {
     const bytes = crypto.randomBytes(6);
@@ -91,7 +104,9 @@ function createDatabase(dbFilePath) {
       risk_level: row.risk_level,
       category: row.category,
       confidence_score: row.confidence_score,
+      evidence_excerpt: row.evidence_excerpt || '',
       detected_signals: row.detected_signals,
+      legal_psych_impact: row.legal_psych_impact || '',
       psychological_first_aid: row.psychological_first_aid,
       actionable_steps: actionableSteps,
       status: row.status,
@@ -110,7 +125,9 @@ function createDatabase(dbFilePath) {
       risk_level,
       category,
       confidence_score,
+      evidence_excerpt,
       detected_signals,
+      legal_psych_impact,
       psychological_first_aid,
       actionable_steps_json,
       status
@@ -123,7 +140,9 @@ function createDatabase(dbFilePath) {
       @risk_level,
       @category,
       @confidence_score,
+      @evidence_excerpt,
       @detected_signals,
+      @legal_psych_impact,
       @psychological_first_aid,
       @actionable_steps_json,
       'PENDING'
@@ -189,7 +208,9 @@ function createDatabase(dbFilePath) {
       risk_level: payload.risk_level,
       category: payload.category,
       confidence_score: Math.round(payload.confidence_score),
+      evidence_excerpt: payload.evidence_excerpt || '',
       detected_signals: payload.detected_signals,
+      legal_psych_impact: payload.legal_psych_impact || '',
       psychological_first_aid: payload.psychological_first_aid,
       actionable_steps_json: JSON.stringify(payload.actionable_steps || []),
     });
@@ -282,7 +303,9 @@ function createDatabase(dbFilePath) {
           t.risk_level,
           t.category,
           t.confidence_score,
+          t.evidence_excerpt,
           t.detected_signals,
+          t.legal_psych_impact,
           t.status,
           t.created_at,
           t.updated_at,

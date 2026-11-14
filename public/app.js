@@ -31,13 +31,15 @@
     studentTab: 'analyzer',
     serverConfig: {
       serverKeyConfigured: false,
-      model: 'gemini-3.8-flash',
+      model: 'gemini-3.5-flash-lite',
       isDefaultPin: true,
       demoPinHint: '11092026',
     },
     currentImageDataUrl: null,
     currentImageName: '',
+    lastImageMeta: null,
     lastAnalysis: null,
+    lastAnalyzeMeta: null,
     lastAnalyzedText: '',
     lastAnalyzedImage: null,
     activeTrackerCode: null,
@@ -45,10 +47,14 @@
     counselorFilterStatus: '',
     selectedCounselorCode: null,
     lastAnalytics: null,
+    lastDashboardTickets: [],
     riskChart: null,
     categoryChart: null,
     chatPreviousInteractionId: null,
     chatHistory: [],
+    analyzeAbortController: null,
+    chatAbortController: null,
+    breathingTimerId: null,
   };
 
   // ==================== PROGRESSIVE POLYFILLS & DIALOG HELPERS ====================
@@ -249,6 +255,81 @@
       throw err;
     }
     return data;
+  }
+
+  function formatByteSize(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+
+  async function streamSseRequest(url, payload, onEvent, signal) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify(payload || {}),
+      signal,
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.ok || !contentType.includes('text/event-stream') || !res.body) {
+      let data = { error: `Lỗi máy chủ (${res.status})`, code: 'STREAM_ERROR' };
+      try {
+        data = await res.json();
+      } catch {
+        // Fallback giữ nguyên thông báo HTTP status
+      }
+      const err = new Error(data.error || `Lỗi máy chủ (${res.status})`);
+      err.status = res.status;
+      err.code = data.code || 'STREAM_ERROR';
+      throw err;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    const processChunkBlock = (block) => {
+      if (!block.trim()) return;
+      let eventName = 'message';
+      const dataLines = [];
+      for (const rawLine of block.split(/\r?\n/)) {
+        if (rawLine.startsWith('event:')) {
+          eventName = rawLine.slice(6).trim();
+        } else if (rawLine.startsWith('data:')) {
+          dataLines.push(rawLine.slice(5).trimStart());
+        }
+      }
+      if (dataLines.length === 0) return;
+      const rawData = dataLines.join('\n');
+      let parsed = rawData;
+      try {
+        parsed = JSON.parse(rawData);
+      } catch {
+        // Giữ nguyên chuỗi thô nếu không phải JSON
+      }
+      onEvent(eventName, parsed);
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split(/\r?\n\r?\n/);
+      buffer = parts.pop() || '';
+      for (const part of parts) {
+        processChunkBlock(part);
+      }
+    }
+
+    buffer += decoder.decode();
+    if (buffer.trim()) {
+      processChunkBlock(buffer);
+    }
   }
 
   function renderFormattedAssistantText(container, text) {
@@ -491,9 +572,10 @@
     });
   }
 
-  // ==================== IMAGE UPLOAD, DRAG-DROP, CTRL+V & OPTIMIZATION ====================
+  // ==================== IMAGE UPLOAD, DRAG-DROP, CTRL+V & SMART CLIENT COMPRESSION ====================
   function optimizeImageFile(file) {
     return new Promise((resolve, reject) => {
+      const startedAt = performance.now();
       const allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
       if (!allowed.includes(file.type)) {
         reject(new Error('Định dạng ảnh không hợp lệ. Vui lòng chọn PNG, JPG, WebP hoặc GIF.'));
@@ -508,28 +590,75 @@
       reader.onerror = () => reject(new Error('Không thể đọc file ảnh.'));
       reader.onload = () => {
         const rawDataUrl = String(reader.result || '');
-        // Nếu ảnh nhỏ hơn 2.5MB thì giữ nguyên chất lượng gốc
-        if (file.size <= 2.5 * 1024 * 1024 || file.type === 'image/gif') {
-          resolve(rawDataUrl);
-          return;
-        }
-        // Nén nhẹ ảnh chụp màn hình điện thoại dung lượng lớn để gửi nhanh & lưu SQLite gọn
         const img = new Image();
-        img.onerror = () => resolve(rawDataUrl);
+        img.onerror = () => {
+          resolve({
+            dataUrl: rawDataUrl,
+            originalBytes: file.size,
+            optimizedBytes: Math.round(rawDataUrl.length * 0.75),
+            width: 0,
+            height: 0,
+            durationMs: Math.round(performance.now() - startedAt),
+            mimeType: file.type,
+          });
+        };
         img.onload = () => {
-          const maxDim = 1600;
-          let { width, height } = img;
+          const maxDim = 1024;
+          let { naturalWidth: width, naturalHeight: height } = img;
+          if (!width || !height) {
+            width = img.width || maxDim;
+            height = img.height || maxDim;
+          }
+
+          if (file.type === 'image/gif' && file.size <= 350 * 1024 && Math.max(width, height) <= maxDim) {
+            resolve({
+              dataUrl: rawDataUrl,
+              originalBytes: file.size,
+              optimizedBytes: file.size,
+              width,
+              height,
+              durationMs: Math.max(1, Math.round(performance.now() - startedAt)),
+              mimeType: 'image/gif',
+            });
+            return;
+          }
+
           if (width > maxDim || height > maxDim) {
             const ratio = Math.min(maxDim / width, maxDim / height);
-            width = Math.round(width * ratio);
-            height = Math.round(height * ratio);
+            width = Math.max(1, Math.round(width * ratio));
+            height = Math.max(1, Math.round(height * ratio));
           }
+
           const canvas = document.createElement('canvas');
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.85));
+
+          let outUrl = canvas.toDataURL('image/webp', 0.78);
+          let outMime = 'image/webp';
+          if (!outUrl.startsWith('data:image/webp')) {
+            outUrl = canvas.toDataURL('image/jpeg', 0.78);
+            outMime = 'image/jpeg';
+          }
+
+          const optimizedBytes = Math.round((outUrl.length - outUrl.indexOf(',') - 1) * 0.75);
+          const finalUrl = optimizedBytes >= file.size && Math.max(img.naturalWidth || width, img.naturalHeight || height) <= maxDim && file.type !== 'image/gif'
+            ? rawDataUrl
+            : outUrl;
+          const finalBytes = finalUrl === rawDataUrl ? file.size : optimizedBytes;
+
+          resolve({
+            dataUrl: finalUrl,
+            originalBytes: file.size,
+            optimizedBytes: finalBytes,
+            width,
+            height,
+            durationMs: Math.max(1, Math.round(performance.now() - startedAt)),
+            mimeType: finalUrl === rawDataUrl ? file.type : outMime,
+          });
         };
         img.src = rawDataUrl;
       };
@@ -539,13 +668,27 @@
 
   async function setAttachedImage(file) {
     const errorEl = document.getElementById('analyze-error');
+    const compressMetaEl = document.getElementById('image-compress-meta');
     setInlineAlert(errorEl, '');
     try {
-      const dataUrl = await optimizeImageFile(file);
-      state.currentImageDataUrl = dataUrl;
-      state.currentImageName = file.name || `anh-chup-${Date.now()}.png`;
-      document.getElementById('preview-img').src = dataUrl;
+      const optimized = await optimizeImageFile(file);
+      state.currentImageDataUrl = optimized.dataUrl;
+      state.currentImageName = file.name || `anh-chup-${Date.now()}.webp`;
+      state.lastImageMeta = optimized;
+      document.getElementById('preview-img').src = optimized.dataUrl;
       document.getElementById('preview-filename').textContent = state.currentImageName;
+      if (compressMetaEl) {
+        const savedPct =
+          optimized.originalBytes > optimized.optimizedBytes
+            ? Math.round(((optimized.originalBytes - optimized.optimizedBytes) / optimized.originalBytes) * 100)
+            : 0;
+        const dims = optimized.width && optimized.height ? `${optimized.width}×${optimized.height} · ` : '';
+        compressMetaEl.textContent =
+          savedPct > 0
+            ? `${dims}${formatByteSize(optimized.originalBytes)} → ${formatByteSize(optimized.optimizedBytes)} (-${savedPct}%) trong ${optimized.durationMs}ms`
+            : `${dims}${formatByteSize(optimized.optimizedBytes)} · Sẵn sàng (${optimized.durationMs}ms)`;
+        compressMetaEl.hidden = false;
+      }
       document.getElementById('dropzone-empty').hidden = true;
       document.getElementById('dropzone-preview').hidden = false;
     } catch (err) {
@@ -556,9 +699,15 @@
   function clearAttachedImage() {
     state.currentImageDataUrl = null;
     state.currentImageName = '';
+    state.lastImageMeta = null;
     document.getElementById('image-input').value = '';
     document.getElementById('preview-img').src = '';
     document.getElementById('preview-filename').textContent = '';
+    const compressMetaEl = document.getElementById('image-compress-meta');
+    if (compressMetaEl) {
+      compressMetaEl.textContent = '';
+      compressMetaEl.hidden = true;
+    }
     document.getElementById('dropzone-empty').hidden = false;
     document.getElementById('dropzone-preview').hidden = true;
   }
@@ -627,21 +776,170 @@
     });
   }
 
-  // ==================== ANALYZER & TICKET CREATION ====================
-  function renderAnalysisResult(analysis) {
+  // ==================== ANALYZER, STREAMING UI, BREATHING AID & TICKET RECEIPT CARD ====================
+  function updateAnalyzeStage(stageKey, labelText, percent) {
+    const labelEl = document.getElementById('analyze-stage-label');
+    const barEl = document.getElementById('analyze-progress-bar');
+    const fillEl = document.getElementById('analyze-progress-fill');
+    const pills = document.querySelectorAll('#analyze-loading .stage-pill');
+
+    const clamped = Math.max(8, Math.min(100, Number(percent) || 0));
+    if (labelEl && labelText) labelEl.textContent = labelText;
+    if (barEl) barEl.setAttribute('aria-valuenow', String(Math.round(clamped)));
+    if (fillEl) fillEl.style.transform = `scaleX(${clamped / 100})`;
+
+    const order = ['optimize', 'scanning', 'first_aid', 'done'];
+    const currentIdx = order.indexOf(stageKey === 'cache_hit' ? 'done' : stageKey);
+    for (const pill of pills) {
+      const pStage = pill.getAttribute('data-stage');
+      const pIdx = order.indexOf(pStage);
+      pill.classList.toggle('is-done', currentIdx > pIdx || stageKey === 'done' || stageKey === 'cache_hit');
+      pill.classList.toggle('is-active', currentIdx === pIdx && stageKey !== 'done' && stageKey !== 'cache_hit');
+    }
+  }
+
+  function stopBreathingGuide(resetMessage = true) {
+    if (state.breathingTimerId) {
+      window.clearInterval(state.breathingTimerId);
+      state.breathingTimerId = null;
+    }
+    const circle = document.getElementById('breathing-circle');
+    const countdown = document.getElementById('breathing-countdown');
+    const phaseEl = document.getElementById('breathing-phase');
+    const btn = document.getElementById('btn-breathing-toggle');
+    if (circle) circle.className = 'breathing-circle';
+    if (countdown) countdown.textContent = '30s';
+    if (resetMessage && phaseEl) {
+      phaseEl.textContent =
+        'Nếu tim đang đập nhanh hay hoảng loạn, nhấn nút bên cạnh để AI đếm nhịp cùng bạn.';
+    }
+    if (btn) {
+      btn.querySelector('span').textContent = 'Hít thở ngay';
+    }
+  }
+
+  function initBreathingGuide() {
+    const toggleBtn = document.getElementById('btn-breathing-toggle');
+    const circle = document.getElementById('breathing-circle');
+    const countdown = document.getElementById('breathing-countdown');
+    const phaseEl = document.getElementById('breathing-phase');
+    if (!toggleBtn) return;
+
+    const PHASES = [
+      { end: 4, label: 'Hít vào chậm bằng mũi… (4 giây)', cls: 'phase-inhale' },
+      { end: 11, label: 'Giữ hơi nhẹ nhàng… (7 giây)', cls: 'phase-hold' },
+      { end: 19, label: 'Thở ra từ từ qua miệng… (8 giây)', cls: 'phase-exhale' },
+      { end: 23, label: 'Hít vào lần 2 thật êm… (4 giây)', cls: 'phase-inhale' },
+      { end: 30, label: 'Thở ra hết và thả lỏng vai… (7 giây)', cls: 'phase-exhale' },
+    ];
+
+    toggleBtn.addEventListener('click', () => {
+      if (state.breathingTimerId) {
+        stopBreathingGuide(true);
+        return;
+      }
+
+      const startAt = Date.now();
+      toggleBtn.querySelector('span').textContent = 'Dừng lại';
+
+      const tick = () => {
+        const elapsedSec = (Date.now() - startAt) / 1000;
+        const remaining = Math.max(0, Math.ceil(30 - elapsedSec));
+        if (countdown) countdown.textContent = `${remaining}s`;
+
+        if (elapsedSec >= 30) {
+          stopBreathingGuide(false);
+          if (phaseEl) {
+            phaseEl.textContent =
+              'Hoàn thành 30 giây. Nhịp tim và hơi thở của bạn đang ổn định hơn rồi.';
+          }
+          announceSR('Đã hoàn thành bài tập hít thở 30 giây.');
+          return;
+        }
+
+        const currentPhase = PHASES.find((p) => elapsedSec < p.end) || PHASES[PHASES.length - 1];
+        if (phaseEl && phaseEl.textContent !== currentPhase.label) {
+          phaseEl.textContent = currentPhase.label;
+        }
+        if (circle) {
+          circle.className = `breathing-circle ${currentPhase.cls}`;
+        }
+      };
+
+      tick();
+      state.breathingTimerId = window.setInterval(tick, 200);
+    });
+  }
+
+  function renderPartialAnalysis(fields) {
+    if (!fields || typeof fields !== 'object') return;
+    const emptyEl = document.getElementById('analysis-empty-state');
+    const contentEl = document.getElementById('analysis-result-content');
+    emptyEl.hidden = true;
+    contentEl.hidden = false;
+
+    if (fields.risk_level) {
+      const risk = RISK_META[fields.risk_level] || RISK_META.LOW;
+      document.getElementById('result-risk-banner').className = `risk-banner ${risk.cls}`;
+      const badge = document.getElementById('result-risk-badge');
+      badge.className = `risk-pill ${risk.cls}`;
+      badge.textContent = risk.label;
+      const isUrgent = fields.risk_level === 'HIGH' || fields.risk_level === 'CRITICAL';
+      document.getElementById('result-crisis-alert').hidden = !isUrgent;
+      document.getElementById('breathing-widget')?.classList.toggle('is-urgent', isUrgent);
+    }
+
+    if (Number.isFinite(fields.confidence_score)) {
+      document.getElementById('result-confidence').textContent = `Độ tin cậy AI: ${fields.confidence_score}%`;
+    }
+    if (fields.category) {
+      document.getElementById('result-category').textContent = fields.category;
+    }
+    if (fields.psychological_first_aid) {
+      document.getElementById('result-first-aid').textContent = fields.psychological_first_aid;
+    }
+    if (fields.evidence_excerpt) {
+      document.getElementById('result-evidence-excerpt').textContent = `"${fields.evidence_excerpt}"`;
+      document.getElementById('result-evidence-excerpt-block').hidden = false;
+    }
+    if (fields.detected_signals) {
+      document.getElementById('result-signals').textContent = fields.detected_signals;
+    }
+    if (fields.legal_psych_impact) {
+      document.getElementById('result-legal-impact').textContent = fields.legal_psych_impact;
+      document.getElementById('result-legal-impact-block').hidden = false;
+    }
+    if (Array.isArray(fields.actionable_steps) && fields.actionable_steps.length > 0) {
+      const stepsEl = document.getElementById('result-steps');
+      stepsEl.textContent = '';
+      for (const step of fields.actionable_steps) {
+        const li = document.createElement('li');
+        li.textContent = step;
+        stepsEl.appendChild(li);
+      }
+    }
+  }
+
+  function renderAnalysisResult(analysis, meta = null) {
     const emptyEl = document.getElementById('analysis-empty-state');
     const contentEl = document.getElementById('analysis-result-content');
     const banner = document.getElementById('result-risk-banner');
     const badge = document.getElementById('result-risk-badge');
+    const latencyEl = document.getElementById('result-latency-chip');
     const confidenceEl = document.getElementById('result-confidence');
     const categoryEl = document.getElementById('result-category');
     const crisisEl = document.getElementById('result-crisis-alert');
     const firstAidEl = document.getElementById('result-first-aid');
+    const excerptBlock = document.getElementById('result-evidence-excerpt-block');
+    const excerptEl = document.getElementById('result-evidence-excerpt');
     const signalsEl = document.getElementById('result-signals');
+    const legalBlock = document.getElementById('result-legal-impact-block');
+    const legalEl = document.getElementById('result-legal-impact');
     const stepsEl = document.getElementById('result-steps');
     const ticketBox = document.getElementById('anonymous-handoff-section');
     const ticketLead = document.getElementById('ticket-submit-lead');
     const standbyNote = document.getElementById('handoff-standby-note');
+    const ticketForm = document.getElementById('ticket-submit-form');
 
     const risk = RISK_META[analysis.risk_level] || RISK_META.LOW;
     banner.className = `risk-banner ${risk.cls}`;
@@ -650,11 +948,38 @@
     confidenceEl.textContent = `Độ tin cậy AI: ${analysis.confidence_score}%`;
     categoryEl.textContent = analysis.category;
 
+    if (latencyEl && meta && Number.isFinite(meta.latencyMs)) {
+      latencyEl.textContent = meta.cached
+        ? `Cache tức thì · ${meta.latencyMs}ms`
+        : `${(meta.latencyMs / 1000).toFixed(2)}s · ${meta.modelUsed || 'gemini-3.5-flash-lite'}`;
+      latencyEl.hidden = false;
+    } else if (latencyEl) {
+      latencyEl.hidden = true;
+    }
+
     const isUrgent = analysis.risk_level === 'HIGH' || analysis.risk_level === 'CRITICAL';
     crisisEl.hidden = !isUrgent;
+    document.getElementById('breathing-widget')?.classList.toggle('is-urgent', isUrgent);
 
     firstAidEl.textContent = analysis.psychological_first_aid;
+
+    if (analysis.evidence_excerpt) {
+      excerptEl.textContent = `"${analysis.evidence_excerpt}"`;
+      excerptBlock.hidden = false;
+    } else {
+      excerptEl.textContent = '';
+      excerptBlock.hidden = true;
+    }
+
     signalsEl.textContent = analysis.detected_signals;
+
+    if (analysis.legal_psych_impact) {
+      legalEl.textContent = analysis.legal_psych_impact;
+      legalBlock.hidden = false;
+    } else {
+      legalEl.textContent = '';
+      legalBlock.hidden = true;
+    }
 
     stepsEl.textContent = '';
     for (const step of analysis.actionable_steps || []) {
@@ -671,13 +996,79 @@
 
     // Mở khóa form gửi ticket cho lượt phân tích mới
     if (standbyNote) standbyNote.hidden = true;
-    document.getElementById('ticket-submit-form').hidden = false;
+    ticketForm.hidden = false;
+    ticketForm.classList.remove('handoff-unlocked-flash');
+    void ticketForm.offsetWidth;
+    ticketForm.classList.add('handoff-unlocked-flash');
     document.getElementById('ticket-receipt').hidden = true;
     document.getElementById('student-note').value = '';
     setInlineAlert(document.getElementById('ticket-submit-error'), '');
 
     emptyEl.hidden = true;
     contentEl.hidden = false;
+  }
+
+  function downloadTicketReceiptCard(code, riskLevel) {
+    if (!code) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 960;
+    canvas.height = 540;
+    const ctx = canvas.getContext('2d');
+
+    const grad = ctx.createLinearGradient(0, 0, 960, 540);
+    grad.addColorStop(0, '#042F2E');
+    grad.addColorStop(0.52, '#0F172A');
+    grad.addColorStop(1, '#082F49');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 960, 540);
+
+    // Subtle accent border
+    ctx.strokeStyle = 'rgba(45, 212, 191, 0.55)';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(24, 24, 912, 492);
+
+    ctx.fillStyle = '#2DD4BF';
+    ctx.font = 'bold 24px "Be Vietnam Pro", Arial, sans-serif';
+    ctx.fillText('SAFESCHOOL AI — LÁ CHẮN SỐ HỌC ĐƯỜNG', 56, 86);
+
+    ctx.fillStyle = '#CBD5E1';
+    ctx.font = '500 18px "Be Vietnam Pro", Arial, sans-serif';
+    ctx.fillText('Thẻ Mã Hồ Sơ Ẩn Danh (Zero-Identity 100%)', 56, 122);
+
+    // Code box
+    ctx.fillStyle = 'rgba(15, 118, 110, 0.25)';
+    ctx.fillRect(56, 162, 848, 150);
+    ctx.strokeStyle = '#2DD4BF';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(56, 162, 848, 150);
+
+    ctx.fillStyle = '#99F6E4';
+    ctx.font = '600 18px "Be Vietnam Pro", Arial, sans-serif';
+    ctx.fillText('MÃ TRA CỨU & NHẮN TIN 2 CHIỀU CÙNG TỔ TƯ VẤN:', 84, 204);
+
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 64px "JetBrains Mono", monospace';
+    ctx.fillText(code, 84, 282);
+
+    const riskLabel = (RISK_META[riskLevel] && RISK_META[riskLevel].label) || riskLevel || 'Đang theo dõi';
+    ctx.fillStyle = '#E2E8F0';
+    ctx.font = '600 20px "Be Vietnam Pro", Arial, sans-serif';
+    ctx.fillText(`Mức độ AI ghi nhận: ${riskLabel}`, 56, 366);
+    ctx.fillText(`Thời gian tạo: ${formatDateTime(new Date().toISOString())}`, 56, 402);
+
+    ctx.fillStyle = '#94A3B8';
+    ctx.font = '500 16px "Be Vietnam Pro", Arial, sans-serif';
+    ctx.fillText('Hãy giữ kín mã này để đọc phản hồi từ Thầy/Cô mà không cần tiết lộ danh tính.', 56, 456);
+    ctx.fillText('Team Victer - DNT (Nguyễn Tiến Đức) · Trường THPT Tôn Đức Thắng, xã Tà Lài, tỉnh Đồng Nai', 56, 488);
+
+    const dataUrl = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `SafeSchool-${code}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showToast(`Đã tải ảnh thẻ mã ${code}.png về máy.`, 'success');
   }
 
   function saveLocalTicketCode(code, riskLevel) {
@@ -733,6 +1124,8 @@
     const loadingEl = document.getElementById('analyze-loading');
     const errorEl = document.getElementById('analyze-error');
 
+    const elapsedBadge = document.getElementById('analyze-elapsed-badge');
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       setInlineAlert(errorEl, '');
@@ -748,33 +1141,106 @@
         return;
       }
 
+      if (state.analyzeAbortController) {
+        state.analyzeAbortController.abort();
+      }
+      const abortCtrl = new AbortController();
+      state.analyzeAbortController = abortCtrl;
+      stopBreathingGuide(true);
+
+      // Chuẩn bị giao diện nhận luồng SSE mới
+      document.getElementById('ticket-submit-form').hidden = true;
+      document.getElementById('ticket-receipt').hidden = true;
+      const standbyNote = document.getElementById('handoff-standby-note');
+      if (standbyNote) standbyNote.hidden = false;
+      const excerptBlock = document.getElementById('result-evidence-excerpt-block');
+      const legalBlock = document.getElementById('result-legal-impact-block');
+      const latencyChip = document.getElementById('result-latency-chip');
+      if (excerptBlock) excerptBlock.hidden = true;
+      if (legalBlock) legalBlock.hidden = true;
+      if (latencyChip) latencyChip.hidden = true;
+
       submitBtn.disabled = true;
       loadingEl.hidden = false;
+      const optimizeLabel = state.lastImageMeta
+        ? `Ảnh đã tối ưu (${formatByteSize(state.lastImageMeta.optimizedBytes)}) · Đang gửi luồng AI...`
+        : 'Đang gửi dữ liệu an toàn tới luồng AI siêu tốc...';
+      updateAnalyzeStage('optimize', optimizeLabel, 18);
+
+      const startedAt = performance.now();
+      if (elapsedBadge) elapsedBadge.textContent = '0.0s';
+      const elapsedInterval = window.setInterval(() => {
+        if (elapsedBadge) {
+          elapsedBadge.textContent = `${((performance.now() - startedAt) / 1000).toFixed(1)}s`;
+        }
+      }, 100);
+
+      let finalPayload = null;
+      let streamErrorMsg = null;
 
       try {
-        const res = await apiFetch('/api/analyze', {
-          method: 'POST',
-          body: JSON.stringify({ text, imageDataUrl }),
-        });
+        await streamSseRequest(
+          '/api/analyze/stream',
+          { text, imageDataUrl },
+          (eventName, payload) => {
+            if (eventName === 'stage' && payload) {
+              updateAnalyzeStage(payload.step, payload.label, payload.percent);
+            } else if (eventName === 'partial' && payload && payload.fields) {
+              renderPartialAnalysis(payload.fields);
+            } else if (eventName === 'done' && payload && payload.analysis) {
+              finalPayload = payload;
+            } else if (eventName === 'error' && payload) {
+              streamErrorMsg = payload.error || 'Không thể hoàn tất phân tích AI.';
+            }
+          },
+          abortCtrl.signal
+        );
 
-        state.lastAnalysis = res.analysis;
+        if (streamErrorMsg) {
+          throw new Error(streamErrorMsg);
+        }
+        if (!finalPayload || !finalPayload.analysis) {
+          throw new Error('Luồng AI kết thúc nhưng chưa nhận đủ kết quả.');
+        }
+
+        state.lastAnalysis = finalPayload.analysis;
+        state.lastAnalyzeMeta = {
+          latencyMs: finalPayload.latencyMs,
+          cached: Boolean(finalPayload.cached),
+          modelUsed: finalPayload.modelUsed,
+        };
         state.lastAnalyzedText = text;
         state.lastAnalyzedImage = imageDataUrl;
-        renderAnalysisResult(res.analysis);
-        announceSR(`Đã hoàn tất phân tích. Mức độ rủi ro: ${RISK_META[res.analysis.risk_level]?.label || res.analysis.risk_level}.`);
+        updateAnalyzeStage('done', 'Hoàn tất phân tích & sơ cứu tâm lý', 100);
+        renderAnalysisResult(finalPayload.analysis, state.lastAnalyzeMeta);
+        announceSR(
+          `Đã hoàn tất phân tích. Mức độ rủi ro: ${RISK_META[finalPayload.analysis.risk_level]?.label || finalPayload.analysis.risk_level}.`
+        );
       } catch (err) {
-        setInlineAlert(errorEl, err.message);
+        if (err.name !== 'AbortError') {
+          setInlineAlert(errorEl, err.message);
+        }
       } finally {
+        window.clearInterval(elapsedInterval);
+        if (state.analyzeAbortController === abortCtrl) {
+          state.analyzeAbortController = null;
+        }
         submitBtn.disabled = false;
         loadingEl.hidden = true;
       }
     });
 
     resetBtn.addEventListener('click', () => {
+      if (state.analyzeAbortController) {
+        state.analyzeAbortController.abort();
+        state.analyzeAbortController = null;
+      }
+      stopBreathingGuide(true);
       textInput.value = '';
       clearAttachedImage();
       setInlineAlert(errorEl, '');
       state.lastAnalysis = null;
+      state.lastAnalyzeMeta = null;
       state.lastAnalyzedText = '';
       state.lastAnalyzedImage = null;
       document.getElementById('analysis-empty-state').hidden = false;
@@ -837,6 +1303,11 @@
       } catch {
         showToast(`Mã của bạn là ${code} — hãy ghi lại cẩn thận.`, 'default');
       }
+    });
+
+    document.getElementById('btn-download-receipt')?.addEventListener('click', () => {
+      const code = document.getElementById('receipt-code').textContent.trim();
+      downloadTicketReceiptCard(code, state.lastAnalysis?.risk_level);
     });
 
     document.getElementById('btn-goto-tracker').addEventListener('click', () => {
@@ -1001,49 +1472,93 @@
     bubble.className = `chat-bubble ${role === 'user' ? 'is-user' : 'is-assistant'}`;
     if (role === 'user') {
       bubble.textContent = text;
-    } else {
+    } else if (text) {
       renderFormattedAssistantText(bubble, text);
     }
     list.appendChild(bubble);
     list.scrollTop = list.scrollHeight;
+    return bubble;
   }
 
   async function sendChatMessage(messageText) {
     const errorEl = document.getElementById('chat-error');
     const sendBtn = document.getElementById('btn-chat-send');
     const input = document.getElementById('chat-input');
+    const list = document.getElementById('chat-messages');
     setInlineAlert(errorEl, '');
 
     const text = messageText.trim();
     if (!text) return;
 
+    if (state.chatAbortController) {
+      state.chatAbortController.abort();
+    }
+    const abortCtrl = new AbortController();
+    state.chatAbortController = abortCtrl;
+
     appendChatBubble('user', text);
     input.value = '';
     sendBtn.disabled = true;
 
+    const assistantBubble = appendChatBubble('assistant', '');
+    assistantBubble.classList.add('chat-streaming-cursor');
+    let streamedReply = '';
+    let finalPayload = null;
+    let streamErrMsg = null;
+
     try {
-      const res = await apiFetch('/api/chat', {
-        method: 'POST',
-        body: JSON.stringify({
+      await streamSseRequest(
+        '/api/chat/stream',
+        {
           message: text,
           previousInteractionId: state.chatPreviousInteractionId,
           history: state.chatHistory,
-        }),
-      });
+        },
+        (eventName, payload) => {
+          if (eventName === 'delta' && payload && typeof payload.text === 'string') {
+            streamedReply += payload.text;
+            renderFormattedAssistantText(assistantBubble, streamedReply);
+            list.scrollTop = list.scrollHeight;
+          } else if (eventName === 'done' && payload) {
+            finalPayload = payload;
+          } else if (eventName === 'error' && payload) {
+            streamErrMsg = payload.error || 'Trợ lý AI gặp gián đoạn khi phản hồi.';
+          }
+        },
+        abortCtrl.signal
+      );
+
+      if (streamErrMsg) {
+        throw new Error(streamErrMsg);
+      }
+
+      const finalText = (finalPayload && finalPayload.reply) || streamedReply;
+      if (!finalText) {
+        throw new Error('Trợ lý AI chưa trả về nội dung phản hồi.');
+      }
+
+      assistantBubble.classList.remove('chat-streaming-cursor');
+      renderFormattedAssistantText(assistantBubble, finalText);
+      list.scrollTop = list.scrollHeight;
 
       state.chatHistory.push({ role: 'user', text });
-      state.chatHistory.push({ role: 'assistant', text: res.reply });
+      state.chatHistory.push({ role: 'assistant', text: finalText });
       if (state.chatHistory.length > 16) {
         state.chatHistory = state.chatHistory.slice(-16);
       }
-      if (res.interactionId) {
-        state.chatPreviousInteractionId = res.interactionId;
+      if (finalPayload && finalPayload.interactionId) {
+        state.chatPreviousInteractionId = finalPayload.interactionId;
       }
-
-      appendChatBubble('assistant', res.reply);
     } catch (err) {
-      setInlineAlert(errorEl, err.message);
+      assistantBubble.classList.remove('chat-streaming-cursor');
+      if (!streamedReply) assistantBubble.remove();
+      if (err.name !== 'AbortError') {
+        setInlineAlert(errorEl, err.message);
+      }
     } finally {
+      if (state.chatAbortController === abortCtrl) {
+        state.chatAbortController = null;
+      }
       sendBtn.disabled = false;
       input.focus();
     }
@@ -1070,6 +1585,10 @@
     }
 
     resetBtn.addEventListener('click', () => {
+      if (state.chatAbortController) {
+        state.chatAbortController.abort();
+        state.chatAbortController = null;
+      }
       state.chatPreviousInteractionId = null;
       state.chatHistory = [];
       setInlineAlert(document.getElementById('chat-error'), '');
@@ -1296,7 +1815,16 @@
         evWrap.hidden = true;
       }
 
+      const excerptEl = document.getElementById('cd-excerpt');
+      const legalEl = document.getElementById('cd-legal-impact');
+      if (excerptEl) {
+        excerptEl.textContent = ticket.evidence_excerpt || 'Không có trích đoạn riêng.';
+      }
       document.getElementById('cd-signals').textContent = ticket.detected_signals;
+      if (legalEl) {
+        legalEl.textContent =
+          ticket.legal_psych_impact || 'Theo dõi theo quy tắc ứng xử học đường & Luật An ninh mạng.';
+      }
       document.getElementById('cd-first-aid').textContent = ticket.psychological_first_aid;
 
       renderMessagesList(document.getElementById('counselor-messages-list'), messages, 'COUNSELOR');
@@ -1321,6 +1849,8 @@
         : '';
       const data = await apiFetch(`/api/counselor/dashboard${qs}`, { counselorAuth: true });
       const { analytics, tickets } = data;
+      state.lastAnalytics = analytics;
+      state.lastDashboardTickets = tickets || [];
 
       document.getElementById('kpi-total').textContent = String(analytics.total || 0);
       document.getElementById('kpi-urgent').textContent = String(
@@ -1349,6 +1879,131 @@
         showToast(err.message, 'error');
       }
     }
+  }
+
+  function csvEscapeCell(value) {
+    let str = String(value == null ? '' : value).replace(/\r?\n/g, ' ').trim();
+    if (/^[=+\-@\t\r]/.test(str)) {
+      str = `'${str}`;
+    }
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+
+  function exportCounselorCsv() {
+    const tickets = state.lastDashboardTickets || [];
+    if (tickets.length === 0) {
+      showToast('Chưa có hồ sơ thực tế nào để xuất CSV.', 'default');
+      return;
+    }
+
+    const headers = [
+      'Ma_Ho_So',
+      'Muc_Do_Rui_Ro',
+      'Do_Tin_Cay_AI',
+      'Phan_Loai',
+      'Khoi_Lop',
+      'Trang_Thai',
+      'Co_Anh_Bang_Chung',
+      'So_Tin_Nhan',
+      'Trich_Doan_Trong_Tam',
+      'Dau_Hieu_AI',
+      'Phap_Ly_Tam_Ly',
+      'Thoi_Gian_Tiep_Nhan',
+    ];
+
+    const rows = tickets.map((t) =>
+      [
+        t.ticket_code,
+        t.risk_level,
+        `${t.confidence_score}%`,
+        t.category,
+        GRADE_META[t.grade_level] || 'Ẩn danh',
+        STATUS_META[t.status]?.label || t.status,
+        t.has_image ? 'Có ảnh' : 'Không',
+        t.message_count ?? 0,
+        t.evidence_excerpt || '',
+        t.detected_signals || '',
+        t.legal_psych_impact || '',
+        formatDateTime(t.created_at),
+      ]
+        .map(csvEscapeCell)
+        .join(',')
+    );
+
+    const csvContent = `\uFEFF${headers.join(',')}\r\n${rows.join('\r\n')}`;
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const today = new Date().toISOString().slice(0, 10);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `safeschool-bao-cao-an-danh-${today}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast(`Đã xuất ${tickets.length} hồ sơ ẩn danh ra file CSV.`, 'success');
+  }
+
+  function printCounselorReport() {
+    const container = document.getElementById('print-report-summary');
+    if (container) {
+      container.textContent = '';
+      const header = document.createElement('div');
+      header.className = 'print-report-header';
+
+      const title = document.createElement('h2');
+      title.textContent = 'BÁO CÁO TỔNG HỢP AN TOÀN MẠNG HỌC ĐƯỜNG (ẨN DANH 100%)';
+
+      const subtitle = document.createElement('p');
+      subtitle.textContent = `Đơn vị: Trường THPT Tôn Đức Thắng, xã Tà Lài, tỉnh Đồng Nai · Ngày lập: ${formatDateTime(
+        new Date().toISOString()
+      )} · Hệ thống SafeSchool AI (Team Victer - DNT)`;
+
+      header.append(title, subtitle);
+      container.appendChild(header);
+
+      const tickets = state.lastDashboardTickets || [];
+      if (tickets.length === 0) {
+        const emptyP = document.createElement('p');
+        emptyP.textContent = 'Hiện chưa có hồ sơ thực tế nào trong cơ sở dữ liệu.';
+        container.appendChild(emptyP);
+      } else {
+        const table = document.createElement('table');
+        table.className = 'print-report-table';
+        const thead = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        for (const col of ['Mã HS', 'Mức độ', 'Phân loại hành vi', 'Khối', 'Trạng thái', 'Dấu hiệu & Trích đoạn', 'Thời gian']) {
+          const th = document.createElement('th');
+          th.textContent = col;
+          headRow.appendChild(th);
+        }
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        for (const t of tickets) {
+          const tr = document.createElement('tr');
+          const cells = [
+            t.ticket_code,
+            RISK_META[t.risk_level]?.label || t.risk_level,
+            `${t.category} (${t.confidence_score}%)`,
+            GRADE_META[t.grade_level] || 'Ẩn danh',
+            STATUS_META[t.status]?.label || t.status,
+            t.evidence_excerpt ? `"${t.evidence_excerpt}" — ${t.detected_signals}` : t.detected_signals,
+            formatDateTime(t.created_at),
+          ];
+          for (const val of cells) {
+            const td = document.createElement('td');
+            td.textContent = String(val || '');
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        container.appendChild(table);
+      }
+    }
+    window.print();
   }
 
   function handleCounselorLogout(notify = true) {
@@ -1418,6 +2073,14 @@
 
     document.getElementById('btn-counselor-logout').addEventListener('click', () => {
       handleCounselorLogout(true);
+    });
+
+    document.getElementById('btn-export-csv')?.addEventListener('click', () => {
+      exportCounselorCsv();
+    });
+
+    document.getElementById('btn-print-report')?.addEventListener('click', () => {
+      printCounselorReport();
     });
 
     for (const chip of document.querySelectorAll('.filter-chip')) {
@@ -1848,6 +2511,7 @@
     initModernWebFallbacks();
     initNavigation();
     initImageDropzone();
+    initBreathingGuide();
     initAnalyzer();
     initTracker();
     initChat();

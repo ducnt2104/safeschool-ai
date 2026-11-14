@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none" role="img" aria-label="SafeSchool AI Brand Logo">
+  <defs>
+    <linearGradient id="logo-surface" x1="12" y1="8" x2="108" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0F766E" />
+      <stop offset="55%" stop-color="#0F3A4D" />
+      <stop offset="100%" stop-color="#0B1120" />
+    </linearGradient>
+    <linearGradient id="logo-shield" x1="22" y1="16" x2="98" y2="106" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2DD4BF" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+    <linearGradient id="logo-heart" x1="36" y1="40" x2="84" y2="86" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5EEAD4" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+    <linearGradient id="logo-circuit" x1="24" y1="60" x2="96" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#99F6E4" />
+      <stop offset="50%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#7DD3FC" />
+    </linearGradient>
+    <filter id="logo-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2.5" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="120" height="120" rx="28" fill="url(#logo-surface)" />
+  <rect x="2.5" y="2.5" width="115" height="115" rx="25.5" stroke="url(#logo-shield)" stroke-opacity="0.45" stroke-width="2" />
+
+  <!-- Vòng halo tinh tế -->
+  <circle cx="60" cy="60" r="42" stroke="url(#logo-shield)" stroke-opacity="0.16" stroke-width="1.5" stroke-dasharray="4 4" />
+
+  <!-- Khiên bảo vệ -->
+  <path
+    d="M60 18L92 31V58C92 78.8 78.2 94.4 60 102C41.8 94.4 28 78.8 28 58V31L60 18Z"
+    fill="url(#logo-shield)"
+    fill-opacity="0.15"
+    stroke="url(#logo-shield)"
+    stroke-width="4"
+    stroke-linejoin="round"
+  />
+
+  <!-- Viền khiên trong -->
+  <path
+    d="M60 25.5L85 35.8V57.5C85 74.6 74 87.6 60 94C46 87.6 35 74.6 35 57.5V35.8L60 25.5Z"
+    stroke="#2DD4BF"
+    stroke-opacity="0.28"
+    stroke-width="1.5"
+    stroke-linejoin="round"
+  />
+
+  <!-- Trái tim nhân văn -->
+  <path
+    d="M60 80.5C60 80.5 40.5 68 40.5 54.4C40.5 47.6 45.7 42.5 52 42.5C55.9 42.5 58.6 44.4 60 47C61.4 44.4 64.1 42.5 68 42.5C74.3 42.5 79.5 47.6 79.5 54.4C79.5 68 60 80.5 60 80.5Z"
+    fill="url(#logo-heart)"
+    fill-opacity="0.24"
+    stroke="url(#logo-heart)"
+    stroke-width="2.8"
+    stroke-linejoin="round"
+  />
+
+  <!-- Mạch sóng AI phát sáng -->
+  <g filter="url(#logo-glow)">
+    <path
+      d="M27 61.5H45L50.8 49.5L57.8 72L64.8 52.5L70.5 61.5H93"
+      stroke="url(#logo-circuit)"
+      stroke-width="3.6"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <circle cx="27" cy="61.5" r="3.6" fill="#2DD4BF" />
+    <circle cx="93" cy="61.5" r="3.6" fill="#38BDF8" />
+    <circle cx="60" cy="21" r="2.6" fill="#2DD4BF" />
+  </g>
+</svg>

@@ -18,16 +18,36 @@ function makeAnalysisStub(overrides = {}) {
     risk_level: 'HIGH',
     category: 'Đe dọa / Bôi nhọ trực tuyến',
     confidence_score: 91,
+    evidence_excerpt: 'Nhắn tin đe dọa trực tiếp trong nhóm chat lớp.',
     detected_signals: 'Phát hiện ngôn từ công kích, đe dọa trực tiếp và gây áp lực tâm lý.',
+    legal_psych_impact:
+      'Gây lo âu kéo dài; có dấu hiệu xúc phạm danh dự, nhân phẩm trên không gian mạng theo Luật An ninh mạng.',
     psychological_first_aid:
       'Thầy cô và SafeSchool AI đang ở bên lắng nghe em. Đây hoàn toàn không phải lỗi của em.',
     actionable_steps: [
-      'Chụp màn hình đầy đủ tin nhắn kèm ngày giờ và tài khoản gửi.',
-      'Chặn và báo cáo tài khoản vi phạm trên nền tảng mạng xã hội.',
+      'Chụp màn hình đầy đủ tin nhắn kèm ngày giờ, đường dẫn URL và ID tài khoản gửi.',
+      'Chặn và báo cáo tài khoản vi phạm trên Facebook/Messenger/Zalo/TikTok.',
       'Chia sẻ ngay với Tổ Tư vấn Tâm lý Nhà trường hoặc gia đình.',
     ],
     ...overrides,
   };
+}
+
+function parseSsePayload(rawText) {
+  const events = [];
+  for (const block of String(rawText || '').split(/\r?\n\r?\n/)) {
+    if (!block.trim()) continue;
+    let eventName = 'message';
+    const dataLines = [];
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+    }
+    if (dataLines.length > 0) {
+      events.push({ event: eventName, data: JSON.parse(dataLines.join('\n')) });
+    }
+  }
+  return events;
 }
 
 async function startTestServer(options = {}) {
@@ -47,11 +67,34 @@ async function startTestServer(options = {}) {
             capturedCalls.analyze.push(payload);
             return makeAnalysisStub();
           },
+          async analyzeStream({ onPartial, ...payload }) {
+            capturedCalls.analyze.push(payload);
+            if (typeof onPartial === 'function') {
+              onPartial({ risk_level: 'HIGH', category: 'Đe dọa / Bôi nhọ trực tuyến' });
+              onPartial({
+                psychological_first_aid:
+                  'Thầy cô và SafeSchool AI đang ở bên lắng nghe em. Đây hoàn toàn không phải lỗi của em.',
+              });
+            }
+            return makeAnalysisStub();
+          },
           async chat(payload) {
             capturedCalls.chat.push(payload);
             return {
               reply: 'Em hãy giữ bình tĩnh, chụp màn hình bằng chứng và trao đổi với Tổ Tư vấn nhé.',
               interactionId: `int-test-${capturedCalls.chat.length}`,
+            };
+          },
+          async chatStream({ onDelta, ...payload }) {
+            capturedCalls.chat.push(payload);
+            const parts = ['Em hãy giữ bình tĩnh, ', 'chụp màn hình bằng chứng và báo ngay cho Tổ Tư vấn nhé.'];
+            for (const part of parts) {
+              if (typeof onDelta === 'function') onDelta(part);
+            }
+            return {
+              reply: parts.join(''),
+              interactionId: `int-stream-${capturedCalls.chat.length}`,
+              modelUsed: options.geminiModel ?? 'gemini-3.8-flash',
             };
           },
         }
@@ -133,9 +176,23 @@ test('Health, config status, static assets, vendor bundles, and zero-mock initia
   const indexRes = await ctx.request('/');
   assert.equal(indexRes.status, 200);
   assert.match(indexRes.data, /SafeSchool AI/);
+  assert.match(indexRes.data, /favicon\.svg/);
+  assert.match(indexRes.data, /logo\.svg/);
+  assert.match(indexRes.data, /Team Victer - DNT \(Nguyễn Tiến Đức\) • Trường THPT Tôn Đức Thắng, xã Tà Lài, tỉnh Đồng Nai\./);
   assert.match(indexRes.data, /id="btn-theme-toggle"/);
   assert.match(indexRes.data, /id="btn-start-tour"/);
+  assert.match(indexRes.data, /id="btn-breathing-toggle"/);
+  assert.match(indexRes.data, /id="btn-export-csv"/);
+  assert.match(indexRes.data, /id="btn-print-report"/);
   assert.doesNotMatch(indexRes.data, /api-key-dialog|x-gemini-api-key|Cài đặt API Key|server-key-warning/);
+
+  const faviconRes = await ctx.request('/favicon.svg');
+  assert.equal(faviconRes.status, 200);
+  assert.match(faviconRes.data, /<svg/);
+
+  const logoRes = await ctx.request('/logo.svg');
+  assert.equal(logoRes.status, 200);
+  assert.match(logoRes.data, /<svg/);
 
   const tailwindCssRes = await ctx.request('/tailwind.css');
   assert.equal(tailwindCssRes.status, 200);
@@ -456,4 +513,71 @@ test('Default unstubbed aiRunner boots cleanly and enforces missing key checks',
   });
   assert.equal(chatRes.status, 503);
   assert.equal(chatRes.data.code, 'MISSING_API_KEY');
+});
+
+test('POST /api/analyze/stream emits staged SSE events, caches SHA-256 hits, and /api/chat/stream streams deltas', async (t) => {
+  const ctx = await startTestServer({
+    geminiApiKey: 'AIza-stream-test-key',
+    geminiModel: 'gemini-3.5-flash-lite',
+  });
+  t.after(() => ctx.close());
+
+  const analyzeRes1 = await ctx.request('/api/analyze/stream', {
+    method: 'POST',
+    body: { text: 'Đừng hòng đi học yên ổn ngày mai nhé.' },
+  });
+  assert.equal(analyzeRes1.status, 200);
+  assert.match(analyzeRes1.headers.get('content-type') || '', /text\/event-stream/);
+  const events1 = parseSsePayload(analyzeRes1.data);
+  const done1 = events1.find((e) => e.event === 'done');
+  assert.ok(events1.some((e) => e.event === 'stage' && e.data.step === 'scanning'));
+  assert.ok(events1.some((e) => e.event === 'partial' && e.data.fields.risk_level === 'HIGH'));
+  assert.ok(done1);
+  assert.equal(done1.data.ok, true);
+  assert.equal(done1.data.cached, false);
+  assert.equal(done1.data.analysis.evidence_excerpt, 'Nhắn tin đe dọa trực tiếp trong nhóm chat lớp.');
+  assert.equal(ctx.capturedCalls.analyze.length, 1);
+
+  // Repeat identical request -> SHA-256 instant cache hit without invoking AI runner again
+  const analyzeRes2 = await ctx.request('/api/analyze/stream', {
+    method: 'POST',
+    body: { text: 'Đừng hòng đi học yên ổn ngày mai nhé.' },
+  });
+  assert.equal(analyzeRes2.status, 200);
+  const events2 = parseSsePayload(analyzeRes2.data);
+  const done2 = events2.find((e) => e.event === 'done');
+  assert.ok(events2.some((e) => e.event === 'stage' && e.data.step === 'cache_hit'));
+  assert.ok(done2);
+  assert.equal(done2.data.cached, true);
+  assert.equal(ctx.capturedCalls.analyze.length, 1);
+
+  // Ticket persistence preserves evidence_excerpt and legal_psych_impact
+  const ticketRes = await ctx.request('/api/tickets', {
+    method: 'POST',
+    body: {
+      grade_level: '11',
+      reported_text: 'Đừng hòng đi học yên ổn ngày mai nhé.',
+      analysis: done1.data.analysis,
+    },
+  });
+  assert.equal(ticketRes.status, 201);
+  const ticketLookup = await ctx.request(`/api/tickets/${ticketRes.data.ticket.ticket_code}`);
+  assert.equal(ticketLookup.status, 200);
+  assert.equal(ticketLookup.data.ticket.evidence_excerpt, done1.data.analysis.evidence_excerpt);
+  assert.equal(ticketLookup.data.ticket.legal_psych_impact, done1.data.analysis.legal_psych_impact);
+
+  // SSE Chat Stream
+  const chatRes = await ctx.request('/api/chat/stream', {
+    method: 'POST',
+    body: { message: 'Em cần giữ bằng chứng trên Messenger thế nào?' },
+  });
+  assert.equal(chatRes.status, 200);
+  assert.match(chatRes.headers.get('content-type') || '', /text\/event-stream/);
+  const chatEvents = parseSsePayload(chatRes.data);
+  const deltas = chatEvents.filter((e) => e.event === 'delta').map((e) => e.data.text);
+  const chatDone = chatEvents.find((e) => e.event === 'done');
+  assert.ok(deltas.length >= 2);
+  assert.ok(chatDone);
+  assert.equal(chatDone.data.ok, true);
+  assert.match(chatDone.data.reply, /giữ bình tĩnh/);
 });

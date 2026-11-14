@@ -7,8 +7,8 @@ cd /d "%~dp0"
 
 echo ============================================================
 echo   SafeSchool AI - La chan So Hoc duong
-echo   Team Victer - DNT - Nguyen Tien Duc
-echo   THPT Ton Duc Thang, xa Ta Lai, Thanh pho Dong Nai
+echo   Team Victer - DNT ^(Nguyen Tien Duc^)
+echo   THPT Ton Duc Thang, xa Ta Lai, tinh Dong Nai
 echo ============================================================
 echo.
 
