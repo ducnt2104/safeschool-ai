@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    (function () {
+      var meta = document.querySelector('meta[name="color-scheme"]');
+      var stored = null;
+      try {
+        stored = localStorage.getItem('safeschool_theme');
+      } catch (e) {}
+      var isDark = stored === 'dark' || (stored !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.classList.toggle('dark', isDark);
+      document.documentElement.classList.toggle('light', !isDark);
+      if (meta) {
+        meta.content = (stored === 'dark' || stored === 'light') ? stored : 'light dark';
+      }
+    })();
+  </script>
+  <meta name="description" content="SafeSchool AI (Lá chắn Số Học đường) - Nền tảng AI phát hiện sớm bắt nạt trực tuyến, sơ cứu tâm lý tức thì và cổng kết nối tư vấn học đường ẩn danh tại Trường THPT Tôn Đức Thắng, xã Tà Lài, Đồng Nai.">
+  <title>SafeSchool AI — Lá chắn Số Học đường | THPT Tôn Đức Thắng</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/tailwind.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="bg-[#F8FAFC] text-[#0F172A] dark:bg-[#0B1120] dark:text-[#F1F5F9]">
+  <a href="#main-content" class="skip-link">Chuyển đến nội dung chính</a>
+
+  <!-- Vùng thông báo Screen Reader tập trung -->
+  <p class="visually-hidden" id="sr-announcer-label">Thông báo trạng thái hệ thống</p>
+  <div id="sr-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Khung chứa Toast Notifications dùng popover="manual" -->
+  <div id="toast-region" class="toast-region" role="region" aria-label="Thông báo"></div>
+
+  <!-- Thanh điều hướng chính -->
+  <header class="site-header">
+    <div class="container header-inner">
+      <div class="brand-group">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            <path d="m9 12 2 2 4-4"></path>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">SafeSchool AI</span>
+          <span class="brand-subtitle">Lá chắn Số · THPT Tôn Đức Thắng, Tà Lài, Đồng Nai</span>
+        </div>
+      </div>
+
+      <nav class="header-actions" aria-label="Điều hướng phân hệ và trợ giúp">
+        <button type="button" id="btn-start-tour" class="tour-trigger-btn">
+          <i data-lucide="compass" aria-hidden="true"></i>
+          <span>Hướng dẫn sử dụng</span>
+        </button>
+
+        <div id="tour-target-header-controls" class="header-controls-cluster">
+          <div class="mode-switcher" role="group" aria-label="Chọn không gian làm việc">
+            <button type="button" id="btn-mode-student" class="mode-btn is-active" aria-pressed="true">
+              <i data-lucide="shield-check" aria-hidden="true"></i>
+              <span>Góc Học sinh</span>
+            </button>
+            <button type="button" id="btn-mode-counselor" class="mode-btn" aria-pressed="false">
+              <i data-lucide="heart-handshake" aria-hidden="true"></i>
+              <span>Góc Tổ Tư vấn</span>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            id="btn-theme-toggle"
+            class="theme-toggle-btn"
+            aria-pressed="false"
+            aria-label="Chuyển sang chế độ Tối"
+            title="Chuyển đổi Giao diện Sáng / Tối"
+          >
+            <i data-lucide="moon" class="theme-icon-to-dark" aria-hidden="true"></i>
+            <i data-lucide="sun" class="theme-icon-to-light" aria-hidden="true"></i>
+            <span class="theme-btn-label" id="theme-toggle-label">Tối</span>
+          </button>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main-content" class="main-shell" tabindex="-1">
+    <!-- ==================== PHÂN HỆ A & C: KHÔNG GIAN HỌC SINH ==================== -->
+    <section id="student-space" class="space-view" aria-label="Không gian Học sinh">
+      <div class="container">
+        <!-- Banner cam kết bảo mật Zero-Identity -->
+        <div class="trust-banner" role="region" aria-label="Cam kết bảo mật danh tính">
+          <div class="trust-banner-icon" aria-hidden="true">
+            <i data-lucide="lock"></i>
+          </div>
+          <div class="trust-banner-body">
+            <h1>Bạn không đơn độc. Mọi chia sẻ tại đây đều ẩn danh 100%.</h1>
+            <p>
+              <strong>Cam kết Zero-Identity:</strong> Hệ thống KHÔNG thu thập họ tên, số điện thoại, email hay địa chỉ IP.
+              Phân tích AI xử lý bảo mật phía máy chủ qua Google AI Studio (<code id="header-model-badge">gemini-3.8-flash</code>).
+            </p>
+          </div>
+          <div class="trust-hotline">
+            <span class="hotline-caption">Cần trợ giúp khẩn cấp 24/7:</span>
+            <a href="tel:111" class="hotline-pill">
+              <i data-lucide="phone-call" aria-hidden="true"></i>
+              <span>Tổng đài 111</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Thông báo nhẹ nếu server chưa cấu hình GEMINI_API_KEY trong .env -->
+        <div id="server-key-warning" class="inline-alert inline-alert-info" role="status" hidden>
+          Máy chủ chưa được cấu hình biến môi trường <code>GEMINI_API_KEY</code> trong tệp <code>.env</code> — chức năng phân tích AI và Trợ lý AI sẽ tạm thời không phản hồi cho đến khi quản trị viên bổ sung khóa API trên máy chủ.
+        </div>
+
+        <!-- Thanh Tab phân hệ Học sinh -->
+        <div class="student-tabs" role="tablist" aria-label="Các công cụ hỗ trợ học sinh">
+          <button type="button" role="tab" id="tab-analyzer" class="tab-btn is-active" aria-selected="true" aria-controls="panel-analyzer">
+            <i data-lucide="scan-search" aria-hidden="true"></i>
+            <span>Phân tích &amp; Sơ cứu AI</span>
+          </button>
+          <button type="button" role="tab" id="tab-tracker" class="tab-btn" aria-selected="false" aria-controls="panel-tracker" tabindex="-1">
+            <i data-lucide="messages-square" aria-hidden="true"></i>
+            <span>Tra cứu Phản hồi (SH-XXXXXX)</span>
+          </button>
+          <button type="button" role="tab" id="tab-handbook" class="tab-btn" aria-selected="false" aria-controls="panel-handbook" tabindex="-1">
+            <i data-lucide="book-open-check" aria-hidden="true"></i>
+            <span>Cẩm nang &amp; Trợ lý Số</span>
+          </button>
+        </div>
+
+        <!-- TAB 1: TRẠM PHÂN TÍCH & SƠ CỨU TÂM LÝ -->
+        <div id="panel-analyzer" class="tab-panel" role="tabpanel" aria-labelledby="tab-analyzer">
+          <div class="analyzer-grid">
+            <!-- Cột nhập liệu đa phương thức -->
+            <div class="card card-elevated dark:bg-[#1E293B] dark:border-[#334155]">
+              <div class="card-header">
+                <h2><i data-lucide="message-square-warning" aria-hidden="true"></i> Gửi nội dung cần kiểm tra</h2>
+                <p>Dán đoạn tin nhắn, bình luận gây tổn thương hoặc tải/dán (Ctrl+V) ảnh chụp màn hình.</p>
+              </div>
+
+              <form id="analyze-form" novalidate>
+                <div id="tour-target-input-area" class="tour-input-cluster">
+                  <div class="form-group">
+                    <label for="report-text">Nội dung tin nhắn / bình luận / tình huống</label>
+                    <span id="report-text-hint" class="field-hint">
+                      Hỗ trợ tiếng Việt có dấu, tiếng lóng hoặc teencode học đường. Có thể để trống nếu bạn chỉ gửi ảnh chụp màn hình.
+                    </span>
+                    <textarea
+                      id="report-text"
+                      name="text"
+                      rows="5"
+                      maxlength="6000"
+                      aria-describedby="report-text-hint"
+                      placeholder="Dán hoặc nhập nguyên văn đoạn tin nhắn, bình luận, lời đe dọa hoặc mô tả ngắn tình huống bạn đang gặp phải..."
+                    ></textarea>
+                  </div>
+
+                  <div class="form-group form-group-last">
+                    <label for="image-input">Ảnh chụp màn hình đoạn chat / bài đăng (tùy chọn)</label>
+                    <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-describedby="dropzone-hint">
+                      <input
+                        type="file"
+                        id="image-input"
+                        name="image"
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        class="visually-hidden"
+                      >
+                      <div id="dropzone-empty" class="dropzone-empty">
+                        <i data-lucide="image-plus" aria-hidden="true"></i>
+                        <p class="dropzone-title">Chọn ảnh từ thiết bị, kéo thả vào đây hoặc nhấn <kbd>Ctrl+V</kbd> để dán ảnh</p>
+                        <span id="dropzone-hint" class="field-hint">Hỗ trợ PNG, JPG, WebP, GIF (tối đa 8MB)</span>
+                      </div>
+                      <div id="dropzone-preview" class="dropzone-preview" hidden>
+                        <img id="preview-img" src="" alt="Xem trước ảnh chụp màn hình đính kèm">
+                        <div class="preview-meta">
+                          <span id="preview-filename" class="preview-name"></span>
+                          <button type="button" id="btn-remove-image" class="btn btn-ghost btn-sm">
+                            <i data-lucide="trash-2" aria-hidden="true"></i>
+                            <span>Gỡ ảnh</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="analyze-error" class="inline-alert inline-alert-error" role="alert" hidden></div>
+
+                <div class="form-actions">
+                  <button type="submit" id="btn-analyze-submit" class="btn btn-primary btn-lg">
+                    <i data-lucide="sparkles" aria-hidden="true"></i>
+                    <span>Phân tích &amp; Sơ cứu ngay</span>
+                  </button>
+                  <button type="button" id="btn-analyze-reset" class="btn btn-secondary">
+                    <i data-lucide="rotate-ccw" aria-hidden="true"></i>
+                    <span>Làm mới</span>
+                  </button>
+                </div>
+
+                <div id="analyze-loading" class="loading-bar-wrap" hidden>
+                  <label for="analyze-progress" class="loading-label">AI đang đánh giá ngữ cảnh và chuẩn bị hướng dẫn sơ cứu tâm lý...</label>
+                  <progress id="analyze-progress" class="indeterminate-progress"></progress>
+                </div>
+              </form>
+            </div>
+
+            <!-- Cột hiển thị kết quả phân tích & cổng gửi ẩn danh -->
+            <div class="card card-elevated dark:bg-[#1E293B] dark:border-[#334155]" id="analysis-result-panel" aria-live="polite">
+              <!-- Trạng thái rỗng ban đầu (Zero Mock Data) -->
+              <div id="analysis-empty-state" class="empty-state">
+                <div class="empty-illustration" aria-hidden="true">
+                  <i data-lucide="shield-plus"></i>
+                </div>
+                <h2>Sẵn sàng lắng nghe và phân tích</h2>
+                <p>
+                  Sau khi bạn nhập văn bản hoặc dán ảnh chụp màn hình, SafeSchool AI sẽ phân tích khách quan theo 3 lớp:
+                </p>
+                <ul class="clean-feature-list">
+                  <li>
+                    <i data-lucide="gauge" aria-hidden="true"></i>
+                    <span>Đánh giá 4 mức độ rủi ro &amp; nhận diện dấu hiệu bắt nạt tiếng Việt</span>
+                  </li>
+                  <li>
+                    <i data-lucide="heart-pulse" aria-hidden="true"></i>
+                    <span>Sơ cứu tâm lý tức thì với lời trấn an ấm áp, không phán xét</span>
+                  </li>
+                  <li>
+                    <i data-lucide="list-checks" aria-hidden="true"></i>
+                    <span>3–4 bước hành động bảo vệ cụ thể theo ngữ cảnh sự việc</span>
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Trạng thái có kết quả thực từ Gemini API -->
+              <div id="analysis-result-content" class="result-content" hidden>
+                <div id="result-risk-banner" class="risk-banner">
+                  <div class="risk-banner-top">
+                    <span id="result-risk-badge" class="risk-pill"></span>
+                    <span id="result-confidence" class="confidence-chip"></span>
+                  </div>
+                  <h2 id="result-category" class="result-category-title"></h2>
+                </div>
+
+                <!-- Cảnh báo đường dây nóng nếu HIGH hoặc CRITICAL -->
+                <div id="result-crisis-alert" class="crisis-callout" role="alert" hidden>
+                  <i data-lucide="siren" aria-hidden="true"></i>
+                  <div>
+                    <strong>Ưu tiên an toàn ngay lập tức:</strong>
+                    <p>
+                      Nếu bạn đang gặp nguy hiểm trực tiếp hoặc có suy nghĩ tự làm hại bản thân, hãy gọi ngay
+                      <a href="tel:111">Tổng đài Bảo vệ Trẻ em 111</a> (miễn phí 24/7),
+                      <a href="tel:113">Cảnh sát 113</a> hoặc Đường dây nóng Ngày Mai <a href="tel:0963061414">096 306 1414</a>,
+                      và gửi hồ sơ ẩn danh dưới đây để Thầy/Cô Tổ Tư vấn hỗ trợ ngay.
+                    </p>
+                  </div>
+                </div>
+
+                <div class="result-block">
+                  <h3><i data-lucide="heart" aria-hidden="true"></i> Sơ cứu tâm lý tức thì</h3>
+                  <p id="result-first-aid" class="first-aid-box"></p>
+                </div>
+
+                <div class="result-block">
+                  <h3><i data-lucide="eye" aria-hidden="true"></i> Dấu hiệu AI nhận diện</h3>
+                  <p id="result-signals" class="signals-text"></p>
+                </div>
+
+                <div class="result-block">
+                  <h3><i data-lucide="check-circle-2" aria-hidden="true"></i> Các bước bảo vệ bạn nên làm ngay</h3>
+                  <ol id="result-steps" class="action-steps-list"></ol>
+                </div>
+              </div>
+
+              <!-- Cổng gửi ẩn danh tới Tổ Tư vấn (Luôn hiện diện rõ cơ chế Zero-Identity cho cả lúc chưa phân tích lẫn sau khi phân tích) -->
+              <section id="anonymous-handoff-section" class="ticket-submit-box" aria-labelledby="ticket-submit-heading">
+                <div class="ticket-submit-header">
+                  <h3 id="ticket-submit-heading">
+                    <i data-lucide="send" aria-hidden="true"></i>
+                    Cổng Gửi Báo cáo Ẩn danh tới Tổ Tư vấn Tâm lý
+                  </h3>
+                  <p id="ticket-submit-lead">
+                    Cam kết <strong>Zero-Identity 100%</strong>: không lưu họ tên, lớp cụ thể, SĐT hay địa chỉ IP. Sau khi gửi, bạn nhận ngay <strong>Mã Hồ Sơ Ẩn Danh</strong> (<code>SH-XXXXXX</code>) để nhắn tin 2 chiều cùng Thầy/Cô.
+                  </p>
+                </div>
+
+                <!-- Trạng thái chờ phân tích xong trước khi mở nút gửi -->
+                <div id="handoff-standby-note" class="handoff-standby-note">
+                  <i data-lucide="shield-check" aria-hidden="true"></i>
+                  <span>Sau khi hoàn tất phân tích AI ở bước trên, biểu mẫu chọn khối lớp (tùy chọn) và nút gửi ẩn danh kèm bằng chứng sẽ tự động mở khóa tại đây.</span>
+                </div>
+
+                <form id="ticket-submit-form" hidden novalidate>
+                  <fieldset class="grade-fieldset">
+                    <legend>Khối lớp của bạn (tùy chọn — không định danh cá nhân)</legend>
+                    <div class="radio-row">
+                      <label class="radio-pill">
+                        <input type="radio" name="grade_level" value="10">
+                        <span>Khối 10</span>
+                      </label>
+                      <label class="radio-pill">
+                        <input type="radio" name="grade_level" value="11">
+                        <span>Khối 11</span>
+                      </label>
+                      <label class="radio-pill">
+                        <input type="radio" name="grade_level" value="12">
+                        <span>Khối 12</span>
+                      </label>
+                      <label class="radio-pill">
+                        <input type="radio" name="grade_level" value="ANONYMOUS" checked>
+                        <span>Ẩn danh hoàn toàn</span>
+                      </label>
+                    </div>
+                  </fieldset>
+
+                  <div class="form-group">
+                    <label for="student-note">Lời nhắn thêm cho Thầy/Cô Tổ Tư vấn (tùy chọn)</label>
+                    <textarea
+                      id="student-note"
+                      name="student_note"
+                      rows="2"
+                      maxlength="2000"
+                      placeholder="Ví dụ: Em muốn xin lời khuyên cách nói chuyện với gia đình hoặc xử lý nhóm chat lớp..."
+                    ></textarea>
+                  </div>
+
+                  <div id="ticket-submit-error" class="inline-alert inline-alert-error" role="alert" hidden></div>
+
+                  <button type="submit" id="btn-send-ticket" class="btn btn-teal-solid btn-block">
+                    <i data-lucide="shield-alert" aria-hidden="true"></i>
+                    <span>Gửi ẩn danh tới Tổ Tư vấn Tâm lý Nhà trường</span>
+                  </button>
+                </form>
+
+                <!-- Thẻ biên nhận mã SH-XXXXXX sau khi gửi thành công -->
+                <div id="ticket-receipt" class="ticket-receipt" hidden>
+                  <div class="receipt-badge">
+                    <i data-lucide="check-check" aria-hidden="true"></i>
+                    <span>Hồ sơ đã được tiếp nhận ẩn danh</span>
+                  </div>
+                  <p class="receipt-instruction">
+                    Hãy lưu lại mã hồ sơ duy nhất dưới đây để đọc phản hồi từ Thầy/Cô Tổ Tư vấn và nhắn tin trao đổi tiếp:
+                  </p>
+                  <div class="receipt-code-row">
+                    <code id="receipt-code" class="ticket-code-display">SH-000000</code>
+                    <button type="button" id="btn-copy-code" class="btn btn-secondary btn-sm">
+                      <i data-lucide="copy" aria-hidden="true"></i>
+                      <span>Sao chép mã</span>
+                    </button>
+                  </div>
+                  <button type="button" id="btn-goto-tracker" class="btn btn-primary btn-block">
+                    <i data-lucide="arrow-right" aria-hidden="true"></i>
+                    <span>Mở khung Tra cứu &amp; Nhắn tin cho mã này</span>
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: TRA CỨU PHẢN HỒI & NHẮN TIN ẨN DANH 2 CHIỀU -->
+        <div id="panel-tracker" class="tab-panel" role="tabpanel" aria-labelledby="tab-tracker" hidden>
+          <div class="tracker-layout">
+            <div class="card card-elevated dark:bg-[#1E293B] dark:border-[#334155] tracker-search-card">
+              <h2><i data-lucide="search-check" aria-hidden="true"></i> Tra cứu hồ sơ ẩn danh</h2>
+              <p>Nhập mã <code>SH-XXXXXX</code> mà hệ thống đã cấp khi bạn gửi báo cáo.</p>
+
+              <search>
+                <form id="lookup-form" class="lookup-form" novalidate>
+                  <div class="form-group">
+                    <label for="lookup-code">Mã hồ sơ ẩn danh</label>
+                    <div class="lookup-input-row">
+                      <input
+                        type="text"
+                        id="lookup-code"
+                        name="code"
+                        class="mono-input"
+                        placeholder="Ví dụ: SH-8F3K2P"
+                        maxlength="9"
+                        autocorrect="off"
+                        autocapitalize="characters"
+                        spellcheck="false"
+                        enterkeyhint="search"
+                        required
+                      >
+                      <button type="submit" id="btn-lookup-submit" class="btn btn-primary">
+                        <i data-lucide="search" aria-hidden="true"></i>
+                        <span>Tra cứu</span>
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              </search>
+
+              <div id="lookup-error" class="inline-alert inline-alert-error" role="alert" hidden></div>
+
+              <!-- Danh sách mã đã lưu cục bộ trên trình duyệt này -->
+              <div id="local-history-box" class="local-history-box" hidden>
+                <div class="local-history-head">
+                  <span>Mã đã gửi trên trình duyệt này:</span>
+                  <button type="button" id="btn-clear-local-history" class="btn-link-danger">Xóa lịch sử máy</button>
+                </div>
+                <div id="local-history-chips" class="chip-row"></div>
+              </div>
+            </div>
+
+            <div class="card card-elevated dark:bg-[#1E293B] dark:border-[#334155] tracker-thread-card">
+              <div id="tracker-empty-state" class="empty-state">
+                <div class="empty-illustration" aria-hidden="true">
+                  <i data-lucide="message-circle-heart"></i>
+                </div>
+                <h3>Chưa chọn hồ sơ tra cứu</h3>
+                <p>
+                  Nhập mã <code>SH-XXXXXX</code> ở khung bên trái để kiểm tra trạng thái tiếp nhận và trao đổi 2 chiều ẩn danh cùng Thầy/Cô Tổ Tư vấn.
+                </p>
+              </div>
+
+              <div id="tracker-detail" class="tracker-detail" hidden>
+                <div class="thread-header">
+                  <div>
+                    <div class="thread-code-row">
+                      <code id="tracker-ticket-code" class="ticket-code-pill"></code>
+                      <span id="tracker-status-badge" class="status-pill"></span>
+                      <span id="tracker-risk-badge" class="risk-pill"></span>
+                    </div>
+                    <h3 id="tracker-category" class="thread-category"></h3>
+                    <p id="tracker-meta" class="thread-meta"></p>
+                  </div>
+                  <button type="button" id="btn-refresh-tracker" class="btn btn-secondary btn-sm">
+                    <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                    <span>Làm mới</span>
+                  </button>
+                </div>
+
+                <details class="summary-disclosure">
+                  <summary>Xem lại nội dung đã gửi và đánh giá của AI</summary>
+                  <div class="disclosure-body">
+                    <p id="tracker-reported-text" class="quoted-report"></p>
+                    <div id="tracker-evidence-wrap" class="evidence-thumb-wrap" hidden>
+                      <button type="button" id="btn-tracker-view-image" class="thumb-btn">
+                        <img id="tracker-evidence-img" src="" alt="Ảnh bằng chứng đã gửi">
+                        <span>Phóng to ảnh đính kèm</span>
+                      </button>
+                    </div>
+                    <p><strong>Sơ cứu AI:</strong> <span id="tracker-first-aid"></span></p>
+                  </div>
+                </details>
+
+                <div class="messages-wrap" id="student-messages-list" aria-live="polite" aria-label="Lịch sử trao đổi với Tổ Tư vấn"></div>
+
+                <form id="student-reply-form" class="reply-form" novalidate>
+                  <label for="student-reply-input" class="visually-hidden">Tin nhắn gửi tới Tổ Tư vấn</label>
+                  <textarea
+                    id="student-reply-input"
+                    name="content"
+                    rows="2"
+                    maxlength="2000"
+                    enterkeyhint="send"
+                    placeholder="Nhắn thêm cho Thầy/Cô Tổ Tư vấn (Enter để gửi, Shift+Enter để xuống dòng)..."
+                    required
+                  ></textarea>
+                  <button type="submit" id="btn-student-reply" class="btn btn-primary">
+                    <i data-lucide="send-horizontal" aria-hidden="true"></i>
+                    <span>Gửi</span>
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: CẨM NANG KỸ NĂNG SỐ & TRỢ LÝ HỎI ĐÁP AN TOÀN MẠNG -->
+        <div id="panel-handbook" class="tab-panel" role="tabpanel" aria-labelledby="tab-handbook" hidden>
+          <div class="handbook-grid">
+            <!-- Cẩm nang kỹ năng số -->
+            <div class="card card-elevated dark:bg-[#1E293B] dark:border-[#334155]">
+              <div class="card-header">
+                <h2><i data-lucide="book-marked" aria-hidden="true"></i> Cẩm nang Kỹ năng Số THPT</h2>
+                <p>Kiến thức thực tế giúp bạn bảo vệ danh dự, tâm lý và quyền lợi hợp pháp trên không gian mạng.</p>
+              </div>
+
+              <section aria-label="Các chuyên đề kỹ năng an toàn mạng" class="accordion-stack">
+                <details name="handbook" open>
+                  <summary>1. Quy trình 4 bước lưu giữ bằng chứng hợp lệ</summary>
+                  <div class="disclosure-body">
+                    <ol>
+                      <li><strong>Chụp toàn màn hình:</strong> Giữ nguyên ngày giờ, tên/ID tài khoản người đăng và ngữ cảnh bình luận (tránh cắt quá sát làm mất tính xác thực).</li>
+                      <li><strong>Sao chép liên kết (URL):</strong> Lưu đường dẫn bài viết hoặc trang cá nhân đối tượng trước khi họ kịp xóa hoặc khóa tài khoản.</li>
+                      <li><strong>Không đôi co, kích động:</strong> Tránh đáp trả bằng lời lẽ xúc phạm ngược lại để không bị cắt ghép làm bất lợi cho chính mình.</li>
+                      <li><strong>Lưu ở nơi an toàn:</strong> Gom ảnh vào thư mục riêng hoặc gửi trực tiếp lên SafeSchool AI để Tổ Tư vấn hỗ trợ xử lý.</li>
+                    </ol>
+                  </div>
+                </details>
+
+                <details name="handbook">
+                  <summary>2. Hướng dẫn Chặn &amp; Báo cáo trên Facebook, Zalo, TikTok</summary>
+                  <div class="disclosure-body">
+                    <ul>
+                      <li><strong>Facebook / Messenger:</strong> Vào trang cá nhân → Dấu <code>...</code> → <em>Tìm hỗ trợ hoặc báo cáo</em> (Quấy rối / Bắt nạt) → chọn <em>Chặn</em> và bật <em>Giới hạn</em> tin nhắn từ người lạ.</li>
+                      <li><strong>Zalo:</strong> Mở khung chat → Biểu tượng menu góc phải → <em>Chặn tin nhắn &amp; cuộc gọi</em> + tắt quyền <em>Nhận tin nhắn từ người lạ</em> trong Quyền riêng tư.</li>
+                      <li><strong>TikTok:</strong> Nhấn giữ bình luận tiêu cực → <em>Báo cáo</em> → chọn <em>Quấy rối hoặc bắt nạt</em>; bật bộ lọc từ khóa bình luận trong Cài đặt quyền riêng tư.</li>
+                    </ul>
+                  </div>
+                </details>
+
+                <details name="handbook">
+                  <summary>3. Luật An ninh mạng &amp; Quy tắc ứng xử cho học sinh</summary>
+                  <div class="disclosure-body">
+                    <p>
+                      Theo <strong>Luật An ninh mạng 2018</strong> và <strong>Bộ Quy tắc ứng xử trên mạng xã hội (QĐ 874/QĐ-BTTTT)</strong>, hành vi xúc phạm nghiêm trọng danh dự, nhân phẩm, tung tin giả vu khống, ghép ảnh nhạy cảm hoặc phát tán thông tin cá nhân người khác đều vi phạm pháp luật (có thể bị xử phạt hành chính hoặc truy cứu trách nhiệm tùy mức độ). Nhà trường và cơ quan chức năng luôn đứng về phía bảo vệ người bị hại.
+                    </p>
+                  </div>
+                </details>
+
+                <details name="handbook">
+                  <summary>4. Sơ cứu cảm xúc tức thì (Kỹ thuật 4-7-8 &amp; 5-4-3-2-1)</summary>
+                  <div class="disclosure-body">
+                    <p>
+                      Khi vừa đọc phải bình luận ác ý khiến tim đập nhanh hoặc hoảng loạn: hãy tạm đặt điện thoại xuống 10 phút, hít vào bằng mũi <strong>4 giây</strong>, giữ hơi <strong>7 giây</strong>, thở ra chậm bằng miệng <strong>8 giây</strong> (lặp lại 4 nhịp). Giá trị của bạn không bao giờ được định đoạt bởi lời công kích ẩn danh trên mạng.
+                    </p>
+                  </div>
+                </details>
+
+                <details name="handbook">
+                  <summary>5. Đường dây nóng &amp; Kênh hỗ trợ khẩn cấp tại Việt Nam</summary>
+                  <div class="disclosure-body">
+                    <ul>
+                      <li><strong>111</strong> — Tổng đài Quốc gia Bảo vệ Trẻ em (miễn phí, trực 24/7).</li>
+                      <li><strong>096 306 1414</strong> — Đường dây nóng Ngày Mai (hỗ trợ tâm lý thanh thiếu niên).</li>
+                      <li><strong>113</strong> — Công an phản ứng nhanh khi có đe dọa bạo lực thân thể ngoài đời thực.</li>
+                      <li><strong>Tổ Tư vấn Tâm lý Trường THPT Tôn Đức Thắng</strong> — Kênh ẩn danh ngay trên SafeSchool AI.</li>
+                    </ul>
+                  </div>
+                </details>
+              </section>
+            </div>
+
+            <!-- Trợ lý AI hỏi đáp -->
+            <div class="card card-elevated dark:bg-[#1E293B] dark:border-[#334155] chat-card">
+              <div class="chat-card-header">
+                <div>
+                  <h2><i data-lucide="bot-message-square" aria-hidden="true"></i> Trợ lý AI An toàn Mạng</h2>
+                  <p>Hỏi đáp tình huống ứng xử, pháp luật mạng và tự bảo vệ cảm xúc</p>
+                </div>
+                <button type="button" id="btn-chat-reset" class="btn btn-secondary btn-sm">
+                  <i data-lucide="plus" aria-hidden="true"></i>
+                  <span>Cuộc trò chuyện mới</span>
+                </button>
+              </div>
+
+              <div id="chat-messages" class="chat-messages" aria-live="polite">
+                <div id="chat-empty-state" class="chat-empty-state">
+                  <div class="empty-illustration small" aria-hidden="true">
+                    <i data-lucide="sparkles"></i>
+                  </div>
+                  <h3>Hãy đặt bất kỳ câu hỏi nào về an toàn mạng</h3>
+                  <p>Bạn có thể chọn nhanh một chủ đề dưới đây hoặc tự nhập câu hỏi của mình:</p>
+                  <div class="starter-prompts">
+                    <button type="button" class="prompt-chip" data-prompt="Nếu bị bạn bè tạo nhóm chat nói xấu hoặc chế ảnh bôi nhọ thì em nên làm gì trước tiên?">
+                      Cách xử lý khi bị chế ảnh / nói xấu trong nhóm chat
+                    </button>
+                    <button type="button" class="prompt-chip" data-prompt="Hành vi tung tin đồn sai sự thật, xúc phạm danh dự học sinh trên mạng bị xử lý như thế nào theo pháp luật Việt Nam?">
+                      Luật An ninh mạng xử lý hành vi vu khống thế nào?
+                    </button>
+                    <button type="button" class="prompt-chip" data-prompt="Làm sao để ổn định tâm lý khi liên tục nhận bình luận miệt thị ngoại hình trên TikTok/Facebook?">
+                      Cách giữ bình tĩnh khi bị Body Shaming trên mạng
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div id="chat-error" class="inline-alert inline-alert-error" role="alert" hidden></div>
+
+              <form id="chat-form" class="reply-form" novalidate>
+                <label for="chat-input" class="visually-hidden">Câu hỏi gửi Trợ lý AI</label>
+                <textarea
+                  id="chat-input"
+                  name="message"
+                  rows="2"
+                  maxlength="2000"
+                  enterkeyhint="send"
+                  placeholder="Nhập câu hỏi của bạn (Enter để gửi, Shift+Enter để xuống dòng)..."
+                  required
+                ></textarea>
+                <button type="submit" id="btn-chat-send" class="btn btn-primary">
+                  <i data-lucide="send" aria-hidden="true"></i>
+                  <span>Hỏi AI</span>
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== PHÂN HỆ B: KHÔNG GIAN TỔ TƯ VẤN TÂM LÝ ==================== -->
+    <section id="counselor-space" class="space-view" aria-label="Không gian Tổ Tư vấn Tâm lý" hidden>
+      <div class="container">
+        <!-- Màn hình yêu cầu xác thực PIN nếu chưa đăng nhập -->
+        <div id="counselor-auth-gate" class="card card-elevated dark:bg-[#1E293B] dark:border-[#334155] auth-gate-card">
+          <div class="empty-illustration" aria-hidden="true">
+            <i data-lucide="shield-ellipsis"></i>
+          </div>
+          <h1>Cổng dành riêng cho Tổ Tư vấn Tâm lý &amp; BCH Đoàn trường</h1>
+          <p>
+            Vui lòng xác thực mã PIN quản trị để truy cập danh sách phân loại mức độ ưu tiên (Triage Queue) và phản hồi học sinh ẩn danh.
+          </p>
+          <p id="inline-pin-hint" class="pin-hint" hidden>
+            Gợi ý mã PIN kiểm thử mặc định: <code id="inline-pin-code">11092026</code>
+          </p>
+          <button type="button" id="btn-open-pin-gate" class="btn btn-primary btn-lg" command="show-modal" commandfor="counselor-pin-dialog">
+            <i data-lucide="key" aria-hidden="true"></i>
+            <span>Nhập mã PIN đăng nhập</span>
+          </button>
+        </div>
+
+        <!-- Bảng điều khiển Tổ Tư vấn sau khi đã xác thực -->
+        <div id="counselor-dashboard" hidden>
+          <div class="dashboard-topbar">
+            <div>
+              <h1>Bảng điều phối Hỗ trợ Tâm lý Học đường</h1>
+              <p>Trường THPT Tôn Đức Thắng — Tự động sắp xếp ưu tiên rủi ro từ Khẩn cấp (CRITICAL) đến Thấp (LOW)</p>
+            </div>
+            <div class="dashboard-actions">
+              <button type="button" id="btn-refresh-dashboard" class="btn btn-secondary">
+                <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                <span>Đồng bộ dữ liệu thực</span>
+              </button>
+              <button type="button" id="btn-counselor-logout" class="btn btn-ghost">
+                <i data-lucide="log-out" aria-hidden="true"></i>
+                <span>Đăng xuất</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 4 KPI thực tế từ SQLite -->
+          <div class="kpi-grid" role="region" aria-label="Thống kê nhanh">
+            <div class="kpi-card dark:bg-[#1E293B] dark:border-[#334155]">
+              <span class="kpi-label">Tổng số hồ sơ thực tế</span>
+              <strong id="kpi-total" class="kpi-value tabular-nums">0</strong>
+            </div>
+            <div class="kpi-card kpi-critical dark:bg-[#1E293B] dark:border-[#334155]">
+              <span class="kpi-label">Mức Khẩn cấp / Cao</span>
+              <strong id="kpi-urgent" class="kpi-value tabular-nums">0</strong>
+            </div>
+            <div class="kpi-card kpi-pending dark:bg-[#1E293B] dark:border-[#334155]">
+              <span class="kpi-label">Đang chờ tiếp nhận</span>
+              <strong id="kpi-pending" class="kpi-value tabular-nums">0</strong>
+            </div>
+            <div class="kpi-card kpi-resolved dark:bg-[#1E293B] dark:border-[#334155]">
+              <span class="kpi-label">Đã giải quyết</span>
+              <strong id="kpi-resolved" class="kpi-value tabular-nums">0</strong>
+            </div>
+          </div>
+
+          <!-- Thống kê xu hướng thời gian thực (Chart.js hoặc Empty State) -->
+          <section class="card card-elevated dark:bg-[#1E293B] dark:border-[#334155] analytics-section" aria-labelledby="analytics-heading">
+            <div class="section-header-inline">
+              <h2 id="analytics-heading"><i data-lucide="bar-chart-3" aria-hidden="true"></i> Thống kê xu hướng thời gian thực</h2>
+              <span class="badge-subtle">100% tính toán trực tiếp từ SQLite</span>
+            </div>
+
+            <div id="analytics-empty-state" class="empty-state compact">
+              <div class="empty-illustration small" aria-hidden="true">
+                <i data-lucide="database"></i>
+              </div>
+              <p class="empty-message-exact">
+                Chưa có dữ liệu báo cáo thực tế — Hãy thử gửi một phân tích ở Góc Học sinh để hệ thống ghi nhận
+              </p>
+            </div>
+
+            <div id="analytics-charts-grid" class="charts-grid" hidden>
+              <figure class="chart-card">
+                <figcaption>Phân bố mức độ rủi ro</figcaption>
+                <div class="chart-canvas-wrap">
+                  <canvas id="chart-risk"></canvas>
+                </div>
+              </figure>
+              <figure class="chart-card">
+                <figcaption>Tỷ lệ phân loại hành vi bắt nạt mạng</figcaption>
+                <div class="chart-canvas-wrap">
+                  <canvas id="chart-category"></canvas>
+                </div>
+              </figure>
+            </div>
+          </section>
+
+          <!-- Danh sách Triage Queue & Khung xử lý chi tiết -->
+          <div class="triage-split">
+            <section class="card card-elevated dark:bg-[#1E293B] dark:border-[#334155] triage-list-card" aria-labelledby="triage-heading">
+              <div class="triage-header">
+                <h2 id="triage-heading"><i data-lucide="list-filter" aria-hidden="true"></i> Hàng đợi Cảnh báo (Triage Queue)</h2>
+                <div class="filter-chips" role="group" aria-label="Lọc theo trạng thái xử lý">
+                  <button type="button" class="filter-chip is-active" data-status="">Tất cả</button>
+                  <button type="button" class="filter-chip" data-status="PENDING">Chờ tiếp nhận</button>
+                  <button type="button" class="filter-chip" data-status="IN_PROGRESS">Đang hỗ trợ</button>
+                  <button type="button" class="filter-chip" data-status="RESOLVED">Đã giải quyết</button>
+                </div>
+              </div>
+
+              <div id="triage-empty-state" class="empty-state compact">
+                <p>Hiện chưa có hồ sơ nào trong hàng đợi này.</p>
+              </div>
+
+              <div id="triage-queue-list" class="triage-list" role="list"></div>
+            </section>
+
+            <section class="card card-elevated dark:bg-[#1E293B] dark:border-[#334155] triage-detail-card" aria-label="Chi tiết hồ sơ đang xử lý">
+              <div id="counselor-detail-empty" class="empty-state">
+                <div class="empty-illustration" aria-hidden="true">
+                  <i data-lucide="inbox"></i>
+                </div>
+                <h3>Chọn một hồ sơ từ hàng đợi</h3>
+                <p>Nhấn vào mã <code>SH-XXXXXX</code> bên trái để xem phân tích AI, bằng chứng ảnh (nếu có) và nhắn tin tư vấn cho học sinh.</p>
+              </div>
+
+              <div id="counselor-detail-content" hidden>
+                <div class="thread-header">
+                  <div>
+                    <div class="thread-code-row">
+                      <code id="cd-code" class="ticket-code-pill"></code>
+                      <span id="cd-risk" class="risk-pill"></span>
+                      <span id="cd-grade" class="grade-pill"></span>
+                    </div>
+                    <h3 id="cd-category" class="thread-category"></h3>
+                    <p id="cd-meta" class="thread-meta"></p>
+                  </div>
+
+                  <div class="status-control-group">
+                    <label for="cd-status-select" class="visually-hidden">Trạng thái xử lý hồ sơ</label>
+                    <select id="cd-status-select" class="select-control">
+                      <option value="PENDING">Đang chờ tiếp nhận</option>
+                      <option value="IN_PROGRESS">Đang hỗ trợ</option>
+                      <option value="RESOLVED">Đã giải quyết</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="cd-report-box">
+                  <h4>Nội dung học sinh cung cấp</h4>
+                  <p id="cd-reported-text" class="quoted-report"></p>
+                  <div id="cd-evidence-wrap" class="evidence-thumb-wrap" hidden>
+                    <button type="button" id="btn-cd-view-image" class="thumb-btn">
+                      <img id="cd-evidence-img" src="" alt="Ảnh chụp màn hình đính kèm trong hồ sơ">
+                      <span>Nhấn để phóng to bằng chứng</span>
+                    </button>
+                  </div>
+                </div>
+
+                <details class="summary-disclosure" open>
+                  <summary>Đánh giá chuyên môn từ Gemini AI</summary>
+                  <div class="disclosure-body">
+                    <p><strong>Dấu hiệu phát hiện:</strong> <span id="cd-signals"></span></p>
+                    <p><strong>Lời sơ cứu đã hiển thị:</strong> <span id="cd-first-aid"></span></p>
+                  </div>
+                </details>
+
+                <div class="messages-wrap" id="counselor-messages-list" aria-live="polite" aria-label="Trao đổi 2 chiều với học sinh"></div>
+
+                <form id="counselor-reply-form" class="reply-form" novalidate>
+                  <label for="counselor-reply-input" class="visually-hidden">Phản hồi tư vấn gửi học sinh</label>
+                  <textarea
+                    id="counselor-reply-input"
+                    name="content"
+                    rows="2"
+                    maxlength="2000"
+                    enterkeyhint="send"
+                    placeholder="Nhập lời khuyên, hướng dẫn hỗ trợ gửi ẩn danh tới học sinh (Enter để gửi)..."
+                    required
+                  ></textarea>
+                  <button type="submit" id="btn-counselor-reply" class="btn btn-primary">
+                    <i data-lucide="send-horizontal" aria-hidden="true"></i>
+                    <span>Gửi phản hồi</span>
+                  </button>
+                </form>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <p>
+        <strong>SafeSchool AI (Lá chắn Số Học đường)</strong> — Triển khai cho Trường THPT Tôn Đức Thắng, xã Tà Lài, tỉnh Đồng Nai.
+      </p>
+      <p class="footer-note">
+        Dữ liệu lưu cục bộ trên SQLite, không lưu định danh cá nhân (Zero-Identity).
+      </p>
+    </div>
+  </footer>
+
+  <!-- ==================== NATIVE <dialog> MODALS ==================== -->
+
+  <!-- Modal 1: Đăng nhập Tổ Tư vấn (Mã PIN) -->
+  <dialog id="counselor-pin-dialog" class="modal-dialog modal-sm" closedby="any" aria-labelledby="pin-dialog-title">
+    <div class="dialog-header">
+      <h2 id="pin-dialog-title"><i data-lucide="lock-keyhole" aria-hidden="true"></i> Xác thực Tổ Tư vấn</h2>
+      <button type="button" class="dialog-close-btn" command="close" commandfor="counselor-pin-dialog" aria-label="Đóng hộp thoại">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="dialog-body">
+      <p class="dialog-desc">
+        Dành cho Tổ Tư vấn Tâm lý và Ban Chấp hành Đoàn Trường THPT Tôn Đức Thắng.
+      </p>
+
+      <div id="dialog-pin-hint-box" class="pin-hint-box" hidden>
+        <i data-lucide="info" aria-hidden="true"></i>
+        <span>Mã PIN demo cho Ban Giám khảo kiểm thử: <strong id="dialog-pin-hint-value">11092026</strong></span>
+      </div>
+
+      <form id="counselor-login-form" novalidate>
+        <div class="form-group">
+          <label for="counselor-pin-input">Mã PIN quản trị</label>
+          <input
+            type="password"
+            id="counselor-pin-input"
+            name="pin"
+            inputmode="numeric"
+            autocomplete="current-password"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            placeholder="Nhập mã PIN..."
+            required
+            autofocus
+          >
+        </div>
+
+        <div id="pin-login-error" class="inline-alert inline-alert-error" role="alert" hidden></div>
+
+        <div class="dialog-footer-actions">
+          <button type="button" class="btn btn-secondary" command="close" commandfor="counselor-pin-dialog">Hủy</button>
+          <button type="submit" id="btn-pin-submit" class="btn btn-primary">
+            <i data-lucide="log-in" aria-hidden="true"></i>
+            <span>Xác nhận đăng nhập</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal 2: Phóng to ảnh chụp màn hình bằng chứng -->
+  <dialog id="image-lightbox-dialog" class="modal-dialog modal-lightbox" closedby="any" aria-labelledby="lightbox-title">
+    <div class="dialog-header">
+      <h2 id="lightbox-title"><i data-lucide="image" aria-hidden="true"></i> Ảnh bằng chứng đính kèm</h2>
+      <button type="button" class="dialog-close-btn" command="close" commandfor="image-lightbox-dialog" aria-label="Đóng ảnh phóng to">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="lightbox-body">
+      <img id="lightbox-img" src="" alt="Bằng chứng ảnh chụp màn hình phóng to">
+    </div>
+  </dialog>
+
+  <!-- ==================== INTERACTIVE SPOTLIGHT ONBOARDING TOUR ==================== -->
+  <div id="tour-backdrop" class="tour-backdrop" hidden aria-hidden="true"></div>
+  <div id="tour-spotlight-ring" class="tour-spotlight-ring" hidden aria-hidden="true"></div>
+
+  <aside
+    id="tour-tooltip"
+    class="tour-tooltip-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="tour-step-title"
+    aria-describedby="tour-step-desc"
+    tabindex="-1"
+    hidden
+  >
+    <div class="tour-tooltip-top">
+      <span id="tour-step-counter" class="tour-step-badge">Bước 1/5</span>
+      <button type="button" id="btn-tour-skip" class="tour-skip-btn">
+        Bỏ qua hướng dẫn
+      </button>
+    </div>
+
+    <h2 id="tour-step-title" class="tour-step-title"></h2>
+    <p id="tour-step-desc" class="tour-step-desc"></p>
+
+    <div id="tour-step-example-box" class="tour-example-box">
+      <i data-lucide="lightbulb" aria-hidden="true"></i>
+      <p id="tour-step-example"></p>
+    </div>
+
+    <div class="tour-tooltip-footer">
+      <div id="tour-dots" class="tour-dots" aria-hidden="true"></div>
+      <div class="tour-nav-actions">
+        <button type="button" id="btn-tour-prev" class="btn btn-secondary btn-sm">Quay lại</button>
+        <button type="button" id="btn-tour-next" class="btn btn-primary btn-sm">Tiếp theo</button>
+        <button type="button" id="btn-tour-finish" class="btn btn-primary btn-sm" hidden>Hoàn tất</button>
+      </div>
+    </div>
+  </aside>
+
+  <script src="/vendor/chart.umd.min.js" defer></script>
+  <script src="/vendor/lucide.min.js" defer></script>
+  <script src="/app.js" defer></script>
+</body>
+</html>
