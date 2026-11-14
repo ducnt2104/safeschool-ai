@@ -235,6 +235,7 @@ function createDatabase(dbFilePath) {
 
   return {
     db,
+    dbPath: resolvedPath,
 
     ping() {
       const row = db.prepare('SELECT 1 AS ok').get();
@@ -358,6 +359,37 @@ function createDatabase(dbFilePath) {
       db.close();
     },
   };
+}
+
+if (require.main === module) {
+  require('dotenv').config();
+  const targetDbPath = process.argv[2];
+  const store = createDatabase(targetDbPath);
+  try {
+    const schemaRows = store.db
+      .prepare(
+        `SELECT type, name
+         FROM sqlite_master
+         WHERE type IN ('table', 'index')
+           AND name NOT LIKE 'sqlite_%'
+         ORDER BY type DESC, name ASC`
+      )
+      .all();
+
+    const tables = schemaRows.filter((row) => row.type === 'table').map((row) => row.name);
+    const indexes = schemaRows.filter((row) => row.type === 'index').map((row) => row.name);
+    const analytics = store.getAnalytics();
+
+    store.db.pragma('wal_checkpoint(TRUNCATE)');
+    console.log(`[SQLite] Khởi tạo thành công: ${store.dbPath}`);
+    console.log(`[SQLite] Tables (${tables.length}): ${tables.join(', ')}`);
+    console.log(`[SQLite] Indexes (${indexes.length}): ${indexes.join(', ')}`);
+    console.log(
+      `[SQLite] Rows (Zero Mock Data): tickets=${analytics.total}, messages=${analytics.totalMessages}`
+    );
+  } finally {
+    store.close();
+  }
 }
 
 module.exports = { createDatabase };

@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "db:init": "node database.js",
     "build:css": "tailwindcss -i ./src/tailwind-input.css -o ./public/tailwind.css --minify",
     "test": "node tests/api.test.js"
   },
