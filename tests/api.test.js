@@ -135,7 +135,7 @@ test('Health, config status, static assets, vendor bundles, and zero-mock initia
   assert.match(indexRes.data, /SafeSchool AI/);
   assert.match(indexRes.data, /id="btn-theme-toggle"/);
   assert.match(indexRes.data, /id="btn-start-tour"/);
-  assert.doesNotMatch(indexRes.data, /api-key-dialog|x-gemini-api-key|Cài đặt API Key/);
+  assert.doesNotMatch(indexRes.data, /api-key-dialog|x-gemini-api-key|Cài đặt API Key|server-key-warning/);
 
   const tailwindCssRes = await ctx.request('/tailwind.css');
   assert.equal(tailwindCssRes.status, 200);

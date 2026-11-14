@@ -392,11 +392,6 @@
         modelBadge.textContent = data.model;
       }
 
-      const keyWarning = document.getElementById('server-key-warning');
-      if (keyWarning) {
-        keyWarning.hidden = Boolean(data.serverKeyConfigured);
-      }
-
       const inlineHint = document.getElementById('inline-pin-hint');
       const inlinePinCode = document.getElementById('inline-pin-code');
       const dialogHintBox = document.getElementById('dialog-pin-hint-box');
