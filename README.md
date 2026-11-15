@@ -1,6 +1,6 @@
 # SafeSchool AI — Lá chắn Số Học đường
 
-Nền tảng web Full-Stack hỗ trợ **phát hiện sớm bắt nạt trực tuyến**, **sơ cứu tâm lý tức thì**, **cẩm nang kỹ năng số** và **cổng kết nối tư vấn học đường ẩn danh 2 chiều** dành cho học sinh THPT — phát triển bởi **Team Victer - DNT (Nguyễn Tiến Đức - Trường THPT Tôn Đức Thắng, xã Tà Lài, tỉnh Đồng Nai)**.
+Nền tảng web Full-Stack hỗ trợ **phát hiện sớm bắt nạt trực tuyến**, **sơ cứu tâm lý tức thì**, **cẩm nang kỹ năng số** và **cổng kết nối tư vấn học đường ẩn danh 2 chiều** dành cho học sinh THPT — phát triển bởi **Team Victer - DNT (Nguyễn Tiến Đức - Trường THPT Tôn Đức Thắng, xã Tà Lài, Thành phố Đồng Nai)**.
 
 ---
 

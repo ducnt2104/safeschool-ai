@@ -170,7 +170,8 @@ test('Health, config status, static assets, vendor bundles, and zero-mock initia
   assert.equal(config.data.serverKeyConfigured, false);
   assert.equal(config.data.isDefaultPin, true);
   assert.equal(config.data.demoPinHint, '11092026');
-  assert.match(config.data.schoolName, /Tôn Đức Thắng/);
+  assert.match(config.data.schoolName, /Trường THPT Tôn Đức Thắng, xã Tà Lài, Thành phố Đồng Nai/);
+  assert.doesNotMatch(config.data.schoolName, /tỉnh Đồng Nai/i);
   assert.match(config.data.requestedModelNote, /gemini-3\.5-flash/i);
 
   const indexRes = await ctx.request('/');
@@ -178,7 +179,8 @@ test('Health, config status, static assets, vendor bundles, and zero-mock initia
   assert.match(indexRes.data, /SafeSchool AI/);
   assert.match(indexRes.data, /favicon\.svg/);
   assert.match(indexRes.data, /logo\.svg/);
-  assert.match(indexRes.data, /Team Victer - DNT \(Nguyễn Tiến Đức\) • Trường THPT Tôn Đức Thắng, xã Tà Lài, tỉnh Đồng Nai\./);
+  assert.match(indexRes.data, /Team Victer - DNT \(Nguyễn Tiến Đức\) • Trường THPT Tôn Đức Thắng, xã Tà Lài, Thành phố Đồng Nai\./);
+  assert.doesNotMatch(indexRes.data, /tỉnh Đồng Nai/i);
   assert.match(indexRes.data, /id="btn-theme-toggle"/);
   assert.match(indexRes.data, /id="btn-start-tour"/);
   assert.match(indexRes.data, /id="btn-breathing-toggle"/);

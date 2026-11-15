@@ -1059,7 +1059,7 @@
     ctx.fillStyle = '#94A3B8';
     ctx.font = '500 16px "Be Vietnam Pro", Arial, sans-serif';
     ctx.fillText('Hãy giữ kín mã này để đọc phản hồi từ Thầy/Cô mà không cần tiết lộ danh tính.', 56, 456);
-    ctx.fillText('Team Victer - DNT (Nguyễn Tiến Đức) · Trường THPT Tôn Đức Thắng, xã Tà Lài, tỉnh Đồng Nai', 56, 488);
+    ctx.fillText('Team Victer - DNT (Nguyễn Tiến Đức) · Trường THPT Tôn Đức Thắng, xã Tà Lài, Thành phố Đồng Nai', 56, 488);
 
     const dataUrl = canvas.toDataURL('image/png');
     const a = document.createElement('a');
@@ -1955,7 +1955,7 @@
       title.textContent = 'BÁO CÁO TỔNG HỢP AN TOÀN MẠNG HỌC ĐƯỜNG (ẨN DANH 100%)';
 
       const subtitle = document.createElement('p');
-      subtitle.textContent = `Đơn vị: Trường THPT Tôn Đức Thắng, xã Tà Lài, tỉnh Đồng Nai · Ngày lập: ${formatDateTime(
+      subtitle.textContent = `Đơn vị: Trường THPT Tôn Đức Thắng, xã Tà Lài, Thành phố Đồng Nai · Ngày lập: ${formatDateTime(
         new Date().toISOString()
       )} · Hệ thống SafeSchool AI (Team Victer - DNT)`;
 
